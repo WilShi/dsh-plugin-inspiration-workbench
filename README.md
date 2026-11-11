@@ -67,6 +67,15 @@ dsh plugin add dsh-plugin-inspiration-workbench
 
 然后重启 DSH（或 ⌘R 刷新 Web UI），侧栏会出现「灵感工作台」。
 
+直接从 GitHub 安装（不需要等 npm 版本）：
+
+```sh
+dsh plugin --profile <profile> add github:WilShi/dsh-plugin-inspiration-workbench
+```
+
+> **v0.1.0 有问题**：客户端 bundle 里写死了本地开发包名，安装后侧栏不出现入口。
+> 请用 **0.1.1+**，或用上面的 GitHub 方式安装。
+
 本地开发用链接安装：
 
 ```sh
