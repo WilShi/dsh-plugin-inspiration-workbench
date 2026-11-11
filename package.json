@@ -1,0 +1,69 @@
+{
+  "name": "dsh-plugin-inspiration-workbench",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "Open many DeepSeek Harness sessions side by side as draggable, stackable cards on a free canvas.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "deepseek",
+    "workbench",
+    "canvas",
+    "multi-session",
+    "ui"
+  ],
+  "license": "MIT",
+  "author": "WilShi",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/WilShi/dsh-plugin-inspiration-workbench.git"
+  },
+  "homepage": "https://github.com/WilShi/dsh-plugin-inspiration-workbench#readme",
+  "bugs": {
+    "url": "https://github.com/WilShi/dsh-plugin-inspiration-workbench/issues"
+  },
+  "exports": {
+    ".": "./src/host/index.js",
+    "./client": "./lib/client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "src/**",
+    "lib/**",
+    "locale/*.json",
+    "icon.svg",
+    "cordis.patch.yml",
+    "scripts/build-client.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node scripts/build-client.mjs",
+    "verify": "node scripts/verify.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-theme",
+        "@deepseek-ai/dsh-api-session-controller"
+      ]
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "playwright": "^1.65.0"
+  }
+}
