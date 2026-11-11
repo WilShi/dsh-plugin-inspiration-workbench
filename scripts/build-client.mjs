@@ -1,4 +1,4 @@
-import { mkdir, stat } from 'node:fs/promises'
+import { mkdir, readFile, stat } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
@@ -30,6 +30,7 @@ function resolveEsbuild() {
   throw new Error('esbuild is required to build lib/client.js; install it or point the fallback at a checkout that has it')
 }
 
+const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
 const esbuild = resolveEsbuild()
 
 await mkdir('lib', { recursive: true })
@@ -47,7 +48,7 @@ await esbuild.build({
   minify: false,
   logLevel: 'info',
   banner: {
-    js: "window.__ModuleLoader__.load({id:'@local/dsh-inspiration-workbench',factory(require){var module={exports:{}};var exports=module.exports;",
+    js: `window.__ModuleLoader__.load({id:'${pkg.name}',factory(require){var module={exports:{}};var exports=module.exports;`,
   },
   footer: { js: 'return module.exports;\n}});' },
 })
