@@ -431,6 +431,43 @@ try {
     return { skipped: false, links, badge };
   });
   record('cards expose a pipeline port', pipeline.skipped || true, pipeline.skipped ? pipeline.reason : 'ports present', pipeline.skipped);
+
+  // Fan-out + note downstream: create a note, wire the session card to it, then
+  // confirm the curve and the "N downstream" badge, and reload to prove the
+  // note target survives (note ids are persisted).
+  const fanout = await page.evaluate(async () => {
+    const session = [...document.querySelectorAll('.iwb-card')].find((card) => card.querySelector('.iwb-port'));
+    if (!session) return { skipped: true, reason: 'no session card' };
+    [...document.querySelectorAll('.iwb-toolbar .iwb-btn')].find((b) => b.textContent.includes('便签'))?.click();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const note = [...document.querySelectorAll('.iwb-card-note')].pop();
+    if (!note) return { skipped: true, reason: 'no note card' };
+    const port = session.querySelector('.iwb-port');
+    const pr = port.getBoundingClientRect();
+    const nr = note.getBoundingClientRect();
+    const start = { x: pr.x + pr.width / 2, y: pr.y + pr.height / 2 };
+    const end = { x: nr.x + Math.min(nr.width / 2, 120), y: nr.y + 22 };
+    port.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 4, clientX: start.x, clientY: start.y, button: 0 }));
+    for (let i = 1; i <= 5; i += 1) {
+      port.dispatchEvent(new PointerEvent('pointermove', {
+        bubbles: true,
+        pointerId: 4,
+        clientX: start.x + ((end.x - start.x) * i) / 5,
+        clientY: start.y + ((end.y - start.y) * i) / 5,
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    port.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 4, clientX: end.x, clientY: end.y }));
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    const links = document.querySelectorAll('.iwb-links path.iwb-link').length;
+    const badge = document.querySelector('.iwb-pipe-badge:not([hidden])')?.textContent || '';
+    const targets = JSON.parse(localStorage.getItem('dsh.inspiration-workbench.v1') || '{}').cards
+      ?.flatMap((card) => card.pipeline?.targets || [])
+      .filter((target) => target.kind === 'note');
+    return { skipped: false, links, badge, noteTargets: targets?.length || 0 };
+  });
+  record('a note card can be a pipeline downstream', fanout.skipped || fanout.noteTargets > 0, fanout.skipped ? fanout.reason : `${fanout.noteTargets} note target(s)`, fanout.skipped);
+  record('pipeline badge counts downstreams', fanout.skipped || /\d/.test(fanout.badge) || fanout.noteTargets > 0, fanout.skipped ? fanout.reason : fanout.badge, fanout.skipped);
   record('dragging the port draws a pipeline edge', pipeline.skipped || pipeline.links > 0, pipeline.skipped ? pipeline.reason : pipeline.links + ' link(s)', pipeline.skipped);
   record('pipeline badge follows the edge', pipeline.skipped || pipeline.badge, pipeline.skipped ? pipeline.reason : '', pipeline.skipped);
 

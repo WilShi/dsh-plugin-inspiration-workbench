@@ -1408,6 +1408,47 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     return state.cards.find((card) => card.sessionId === sessionId) || null;
   }
 
+  // Pipelines may fan out: a card keeps a list of targets, and a target can be
+  // another session card or a note card (the note just collects the result).
+  function pipeTargets(card) {
+    const pipeline = card.pipeline;
+    if (!pipeline) return [];
+    if (Array.isArray(pipeline.targets)) {
+      return pipeline.targets.filter((target) => target && (target.id || target.targetSessionId));
+    }
+    if (pipeline.targetSessionId) {
+      return [{ kind: 'session', id: pipeline.targetSessionId, mode: pipeline.mode === 'draft' ? 'draft' : 'send' }];
+    }
+    return [];
+  }
+
+  function setPipeTargets(card, targets) {
+    card.pipeline = targets.length ? { targets } : null;
+  }
+
+  function cardOfPipeTarget(target) {
+    if (!target) return null;
+    if (target.kind === 'note') return state.cards.find((entry) => entry.kind === 'note' && entry.id === target.id) || null;
+    return sessionCardOf(target.id);
+  }
+
+  function pipeTargetLabel(target) {
+    const targetCard = cardOfPipeTarget(target);
+    if (targetCard) return targetCard.title || t('untitled');
+    return target?.id || '';
+  }
+
+  function addPipeTarget(card, targetCard) {
+    const kind = targetCard.kind === 'note' ? 'note' : 'session';
+    const id = kind === 'note' ? targetCard.id : targetCard.sessionId;
+    if (!id || targetCard === card) return false;
+    const targets = pipeTargets(card).filter((target) => !(target.kind === kind && target.id === id));
+    const expanded = targets.length !== pipeTargets(card).length;
+    targets.push({ kind, id, mode: 'send' });
+    setPipeTargets(card, targets);
+    return !expanded;
+  }
+
   function portAnchor(card) {
     return { x: card.x + card.w, y: card.y + 30 };
   }
@@ -1421,25 +1462,27 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     return 'M ' + from.x + ' ' + from.y + ' C ' + (from.x + dx) + ' ' + from.y + ', ' + (to.x - dx) + ' ' + to.y + ', ' + to.x + ' ' + to.y;
   }
 
-  /** Draw one curve per configured pipeline, plus a fat invisible hit area. */
+  /** Draw one curve per pipeline target, plus a fat invisible hit area each. */
   function renderPipelines() {
     while (linkLayer.firstChild) linkLayer.removeChild(linkLayer.firstChild);
     for (const card of state.cards) {
-      const target = card.pipeline?.targetSessionId ? sessionCardOf(card.pipeline.targetSessionId) : null;
-      if (!target || target === card) continue;
-      const d = linkPath(portAnchor(card), targetAnchor(target));
-      const hit = document.createElementNS(SVG_NS, 'path');
-      hit.setAttribute('d', d);
-      hit.setAttribute('class', 'iwb-link-hit');
-      hit.addEventListener('pointerdown', (event) => {
-        event.stopPropagation();
-        openPipeMenu(card, event.currentTarget);
-      });
-      const path = document.createElementNS(SVG_NS, 'path');
-      path.setAttribute('d', d);
-      path.setAttribute('class', 'iwb-link');
-      if (card.pipeline.mode === 'draft') path.setAttribute('stroke-dasharray', '4 4');
-      linkLayer.append(hit, path);
+      for (const target of pipeTargets(card)) {
+        const targetCard = cardOfPipeTarget(target);
+        if (!targetCard || targetCard === card) continue;
+        const d = linkPath(portAnchor(card), targetAnchor(targetCard));
+        const hit = document.createElementNS(SVG_NS, 'path');
+        hit.setAttribute('d', d);
+        hit.setAttribute('class', 'iwb-link-hit');
+        hit.addEventListener('pointerdown', (event) => {
+          event.stopPropagation();
+          openPipeMenu(card, target, event.currentTarget);
+        });
+        const path = document.createElementNS(SVG_NS, 'path');
+        path.setAttribute('d', d);
+        path.setAttribute('class', 'iwb-link');
+        if (target.mode === 'draft') path.setAttribute('stroke-dasharray', '4 4');
+        linkLayer.append(hit, path);
+      }
     }
   }
 
@@ -1452,7 +1495,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     });
   }
 
-  /** Drag from a card's port to another card to wire a pipeline. */
+  /** Drag from a card's port to another card (session or note) to wire it up. */
   function bindPort(card) {
     const port = card.el.querySelector('.iwb-port');
     if (!port) return;
@@ -1474,30 +1517,43 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
         temp.setAttribute('d', linkPath(portAnchor(card), point(clientX, clientY)));
       };
       draw(event.clientX, event.clientY);
-      port.setPointerCapture?.(event.pointerId);
+      try {
+        port.setPointerCapture?.(event.pointerId);
+      } catch {
+        /* synthetic pointers (tests) have no active pointer id */
+      }
 
       const onMove = (moveEvent) => {
         draw(moveEvent.clientX, moveEvent.clientY);
         const under = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY);
         const candidate = under?.closest?.('.iwb-card');
         const targetCard = candidate ? state.cards.find((entry) => entry.el === candidate) : null;
+        const usable = targetCard && targetCard !== card && (targetCard.sessionId || (targetCard.kind === 'note' && targetCard.id));
         if (hovered && hovered !== targetCard) hovered.el.classList.remove('iwb-link-target');
-        hovered = targetCard && targetCard !== card && targetCard.sessionId ? targetCard : null;
+        hovered = usable ? targetCard : null;
         if (hovered) hovered.el.classList.add('iwb-link-target');
       };
       const finish = (upEvent) => {
-        port.releasePointerCapture?.(event.pointerId);
+        try {
+          port.releasePointerCapture?.(event.pointerId);
+        } catch {
+          /* already released */
+        }
         port.removeEventListener('pointermove', onMove);
         port.removeEventListener('pointerup', finish);
         port.removeEventListener('pointercancel', cancel);
         temp.remove();
         if (hovered) {
           hovered.el.classList.remove('iwb-link-target');
-          card.pipeline = { targetSessionId: hovered.sessionId, mode: card.pipeline?.mode || 'send' };
+          const created = addPipeTarget(card, hovered);
           renderPipeBadge(card);
           schedulePipelines();
           saveSoon();
-          toast(t('pipe.created').replace('{name}', hovered.title || t('untitled')));
+          toast(
+            created
+              ? t('pipe.created').replace('{name}', hovered.title || t('untitled'))
+              : t('pipe.already').replace('{name}', hovered.title || t('untitled'))
+          );
         } else if (upEvent) {
           toast(t('pipe.needTarget'));
         }
@@ -1513,12 +1569,16 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
   function renderPipeBadge(card) {
     const badge = card.el?.querySelector('.iwb-pipe-badge');
     if (!badge) return;
-    const target = card.pipeline?.targetSessionId ? sessionCardOf(card.pipeline.targetSessionId) : null;
-    badge.hidden = !target;
-    if (target) {
-      badge.textContent = t('pipe.active').replace('{name}', target.title || t('untitled'));
-      badge.title = card.pipeline.mode === 'draft' ? t('pipe.draft') : t('pipe.send');
+    const targets = pipeTargets(card).filter((target) => cardOfPipeTarget(target));
+    badge.hidden = !targets.length;
+    if (!targets.length) return;
+    if (targets.length === 1) {
+      badge.textContent = t('pipe.active').replace('{name}', pipeTargetLabel(targets[0]));
+      badge.title = targets[0].mode === 'draft' ? t('pipe.draft') : t('pipe.send');
+      return;
     }
+    badge.textContent = t('pipe.multi').replace('{n}', String(targets.length));
+    badge.title = targets.map((target) => pipeTargetLabel(target)).join(' · ');
   }
 
   /** Last assistant message is what a downstream card normally wants. */
@@ -1577,92 +1637,127 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
   }
 
   async function deliverPipeline(card) {
-    const pipeline = card.pipeline;
-    if (!pipeline?.targetSessionId) return;
-    const target = sessionCardOf(pipeline.targetSessionId);
-    if (!target) return;
+    const targets = pipeTargets(card);
+    if (!targets.length) return;
     const text = lastAssistantText(card);
     if (!text) return;
     const fingerprint = text.slice(0, 160);
-    if (card.pipedFingerprint === fingerprint) return;
+    card.pipedFingerprints = card.pipedFingerprints || {};
     const depth = (card.pipeDepth || 0) + 1;
     if (depth > 3) {
       toast(t('pipe.tooLong'));
       return;
     }
-    card.pipedFingerprint = fingerprint;
 
-    if (pipeline.mode === 'draft') {
-      const field = target.el?.querySelector('.iwb-foot textarea');
-      if (!field) return;
-      field.value = field.value ? field.value.replace(/\s*$/, '\n\n') + text : text;
-      field.dispatchEvent(new Event('input', { bubbles: true }));
-      ensureVisible(target);
-      toast(t('pipe.drafted').replace('{name}', target.title || t('untitled')));
-    } else {
+    for (const target of targets) {
+      const key = target.kind + ':' + target.id;
+      if (card.pipedFingerprints[key] === fingerprint) continue;
+      const targetCard = cardOfPipeTarget(target);
+
+      // A note downstream just collects the text, whatever its mode says.
+      if (target.kind === 'note') {
+        if (!targetCard) continue;
+        const area = targetCard.el?.querySelector('.iwb-note-input');
+        if (!area) continue;
+        area.value = area.value ? area.value.replace(/\s*$/, '\n\n') + text : text;
+        area.dispatchEvent(new Event('input', { bubbles: true }));
+        targetCard.pipeDepth = depth;
+        card.pipedFingerprints[key] = fingerprint;
+        ensureVisible(targetCard);
+        toast(t('pipe.noted').replace('{name}', targetCard.title || t('untitled')));
+        continue;
+      }
+
+      if (target.mode === 'draft') {
+        const field = targetCard?.el?.querySelector('.iwb-foot textarea');
+        if (!field) continue;
+        field.value = field.value ? field.value.replace(/\s*$/, '\n\n') + text : text;
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+        ensureVisible(targetCard);
+        targetCard.pipeDepth = depth;
+        card.pipedFingerprints[key] = fingerprint;
+        toast(t('pipe.drafted').replace('{name}', pipeTargetLabel(target)));
+        continue;
+      }
+
       try {
-        await adapter.prompt(target.sessionId, text, 'queue');
-        toast(t('pipe.sent').replace('{name}', target.title || t('untitled')));
+        await adapter.prompt(target.id, text, 'queue');
+        card.pipedFingerprints[key] = fingerprint;
+        if (targetCard) targetCard.pipeDepth = depth;
+        toast(t('pipe.sent').replace('{name}', pipeTargetLabel(target)));
       } catch (error) {
         toast(t('pipe.failed').replace('{error}', error?.message || ''));
-        return;
       }
     }
-    target.pipeDepth = depth;
   }
 
-  /** Click a pipeline curve: switch its delivery mode or remove it. */
-  function openPipeMenu(card, anchor) {
+  /** Click a pipeline curve: switch that edge's mode or remove it. */
+  function openPipeMenu(card, target, anchor) {
     if (pipePop) {
       closePipeMenu();
       return;
     }
-    const target = sessionCardOf(card.pipeline?.targetSessionId);
     if (!target) return;
+    const targetCard = cardOfPipeTarget(target);
+    const label = pipeTargetLabel(target);
+    const isNote = target.kind === 'note';
     const pop = el('div', 'iwb-popover iwb-link-menu');
     pop.setAttribute('role', 'dialog');
     pop.setAttribute('aria-label', t('pipe.title'));
     const head = el('div', 'iwb-popover-head');
-    head.textContent = t('pipe.title');
+    head.textContent = isNote ? t('pipe.noteTarget') : t('pipe.title');
     const status = el('div', 'iwb-popover-note');
-    status.textContent = t('pipe.linked').replace('{name}', target.title || t('untitled'));
+    status.textContent = t('pipe.linked').replace('{name}', label);
     pop.append(head, status);
 
-    const mode = card.pipeline.mode === 'draft' ? 'draft' : 'send';
-    const modes = [
-      { id: 'send', label: t('pipe.send'), hint: t('pipe.sendHint') },
-      { id: 'draft', label: t('pipe.draft'), hint: t('pipe.draftHint') },
-    ];
-    for (const option of modes) {
-      const row = el('button', 'iwb-model-row' + (mode === option.id ? ' current' : ''));
-      row.type = 'button';
-      row.innerHTML = '<span class="iwb-model-main"><span class="iwb-model-name"></span><span class="iwb-model-desc"></span></span>' + (mode === option.id ? '<span class="iwb-check">✓</span>' : '');
-      row.querySelector('.iwb-model-name').textContent = option.label;
-      row.querySelector('.iwb-model-desc').textContent = option.hint;
-      row.addEventListener('click', (event) => {
-        event.stopPropagation();
-        card.pipeline = { ...card.pipeline, mode: option.id };
-        renderPipeBadge(card);
-        schedulePipelines();
-        saveSoon();
-        closePipeMenu();
-        toast(option.id === 'draft' ? t('pipe.modeDraft') : t('pipe.modeSend'));
-      });
-      pop.appendChild(row);
+    if (!isNote) {
+      const mode = target.mode === 'draft' ? 'draft' : 'send';
+      const modes = [
+        { id: 'send', label: t('pipe.send'), hint: t('pipe.sendHint') },
+        { id: 'draft', label: t('pipe.draft'), hint: t('pipe.draftHint') },
+      ];
+      for (const option of modes) {
+        const row = el('button', 'iwb-model-row' + (mode === option.id ? ' current' : ''));
+        row.type = 'button';
+        row.innerHTML = '<span class="iwb-model-main"><span class="iwb-model-name"></span><span class="iwb-model-desc"></span></span>' + (mode === option.id ? '<span class="iwb-check">✓</span>' : '');
+        row.querySelector('.iwb-model-name').textContent = option.label;
+        row.querySelector('.iwb-model-desc').textContent = option.hint;
+        row.addEventListener('click', (event) => {
+          event.stopPropagation();
+          const targets = pipeTargets(card).map((entry) =>
+            entry.kind === target.kind && entry.id === target.id ? { ...entry, mode: option.id } : entry
+          );
+          setPipeTargets(card, targets);
+          renderPipeBadge(card);
+          schedulePipelines();
+          saveSoon();
+          closePipeMenu();
+          toast(option.id === 'draft' ? t('pipe.modeDraft') : t('pipe.modeSend'));
+        });
+        pop.appendChild(row);
+      }
+    } else {
+      const statusRow = el('div', 'iwb-popover-note');
+      statusRow.textContent = t('pipe.noteHint');
+      pop.appendChild(statusRow);
     }
 
     const remove = el('button', 'iwb-model-row iwb-link-remove');
     remove.type = 'button';
     remove.innerHTML = '<span class="iwb-model-main"><span class="iwb-model-name"></span></span>';
-    remove.querySelector('.iwb-model-name').textContent = t('pipe.remove');
+    remove.querySelector('.iwb-model-name').textContent = isNote ? t('pipe.removeNote') : t('pipe.remove');
     remove.addEventListener('click', (event) => {
       event.stopPropagation();
-      card.pipeline = null;
+      setPipeTargets(
+        card,
+        pipeTargets(card).filter((entry) => !(entry.kind === target.kind && entry.id === target.id))
+      );
       renderPipeBadge(card);
       schedulePipelines();
       saveSoon();
       closePipeMenu();
       toast(t('pipe.removed'));
+      if (targetCard) ensureVisible(targetCard);
     });
     pop.appendChild(remove);
 
@@ -1698,6 +1793,17 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
       /* the session scope may already be gone */
     }
     state.cards = state.cards.filter((c) => c !== card);
+    // Drop pipeline edges that pointed at the card we just closed.
+    const goneId = card.kind === 'note' ? card.id : card.sessionId;
+    const goneKind = card.kind === 'note' ? 'note' : 'session';
+    for (const other of state.cards) {
+      const targets = pipeTargets(other);
+      const kept = targets.filter((target) => !(target.kind === goneKind && target.id === goneId));
+      if (kept.length !== targets.length) {
+        setPipeTargets(other, kept);
+        renderPipeBadge(other);
+      }
+    }
     schedulePipelines();
     if (state.selected.delete(card.id)) renderBatchBar();
     if (state.focusedId === card.id) {
@@ -2542,7 +2648,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
         y: card.y,
         w: card.w,
         h: card.h,
-        pipeline: card.pipeline || null,
+        pipeline: pipeTargets(card).length ? { targets: pipeTargets(card) } : null,
       });
     }
     for (const stack of saved.stacks || []) {
@@ -2582,13 +2688,14 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
       pan: state.pan,
       settings: { ...state.settings },
       cards: state.cards.map((card) => ({
+        id: card.kind === 'note' ? card.id : undefined,
         sessionId: card.sessionId,
         title: card.title,
         workspace: card.workspace || '',
         kind: card.kind || 'session',
         note: card.note || '',
         pinned: Boolean(card.pinned),
-        pipeline: card.pipeline || null,
+        pipeline: pipeTargets(card).length ? { targets: pipeTargets(card) } : null,
         x: card.x,
         y: card.y,
         w: card.w,

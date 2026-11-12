@@ -479,6 +479,7 @@
   font-size: 9px; line-height: 1; color: var(--dsw-alias-label-deep-diving);
 }
 .iwb-card.iwb-link-target { outline: 2px dashed var(--dsw-alias-label-deep-diving); outline-offset: 3px; }
+.iwb-card-note.iwb-link-target { outline-style: solid; }
 .iwb-link-menu { min-width: 230px; }
 .iwb-link-remove .iwb-model-name { color: var(--dsw-alias-state-error-primary); }
 
