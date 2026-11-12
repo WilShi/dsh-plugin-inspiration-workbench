@@ -146,6 +146,11 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
   canvas.setAttribute('aria-label', t('a11y.canvas'));
   const world = el('div', 'iwb-world');
   canvas.appendChild(world);
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const linkLayer = document.createElementNS(SVG_NS, 'svg');
+  linkLayer.setAttribute('class', 'iwb-links');
+  linkLayer.setAttribute('aria-hidden', 'true');
+  world.appendChild(linkLayer);
 
   const emptyState = el(
     'div',
@@ -185,7 +190,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
       tools.closeRefPicker();
     },
   });
-  const arrangeMenu = createArrangeMenu({ t, state, canvas, fitView, saveSoon, toast, defaultSize: { w: DEFAULT_W, h: DEFAULT_H }, gap: GAP, anchor: btnArrange });
+  const arrangeMenu = createArrangeMenu({ t, state, canvas, fitView, saveSoon, toast, defaultSize: { w: DEFAULT_W, h: DEFAULT_H }, gap: GAP, anchor: btnArrange, afterArrange: () => schedulePipelines() });
   const workspaceMenu = createWorkspaceMenu({
     t,
     adapter,
@@ -346,6 +351,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
   function layoutStack(stack) {
     const cards = stackCards(stack);
     if (!cards.length) return;
+    schedulePipelines();
     state.zTop += cards.length + 1;
     const base = state.zTop;
     const inStack = cards.length > 1;
@@ -498,7 +504,6 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
       '<span class="iwb-stack-badge" hidden></span>' +
       '<span class="iwb-pipe-badge" hidden></span>' +
       '<span class="iwb-actions">' +
-      '<button type="button" data-act="pipe" title="' + t('pipe.title') + '" aria-label="' + t('pipe.title') + '">' + icon('flow') + '</button>' +
       '<button type="button" data-act="outline" title="' + t('card.outline') + '" aria-label="' + t('card.outline') + '">' + icon('list') + '</button>' +
       '<button type="button" data-act="search" title="' + t('card.search') + '" aria-label="' + t('card.search') + '">' + icon('search') + '</button>' +
       '<button type="button" data-act="more" class="iwb-act-more" title="' + t('card.more') + '" aria-label="' + t('card.more') + '">' + icon('more') + '</button>' +
@@ -567,6 +572,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     node.querySelector('[data-act="outline"]')?.remove();
     node.querySelector('[data-act="pipe"]')?.remove();
     node.querySelector('.iwb-pipe-badge')?.remove();
+
     node.querySelector('.iwb-search')?.remove();
     noteBody(card);
     bindCard(card);
@@ -618,6 +624,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     node.dataset.sessionId = sessionId;
     card.el = node;
     world.appendChild(node);
+    node.appendChild(el('span', 'iwb-port'));
     node.querySelector('.iwb-card-title').textContent = card.title;
     const bodyRegion = node.querySelector('.iwb-body');
     bodyRegion.tabIndex = 0;
@@ -625,12 +632,14 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     bodyRegion.setAttribute('aria-label', t('a11y.body'));
 
     bindCard(card);
+    bindPort(card);
     for (const [boardKey, value] of expandedTurns) {
       if (!boardKey.startsWith(sessionId + ':')) continue;
       card.toolOpen.set('turn:' + boardKey.slice(sessionId.length + 1), value);
     }
     renderFoot(card);
     renderPipeBadge(card);
+    schedulePipelines();
     state.cards.push(card);
     updateCounts();
     updateEmptyState();
@@ -1307,6 +1316,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     });
     saveSoon();
     void fitView();
+    schedulePipelines();
   }
 
   function exitKanban() {
@@ -1323,6 +1333,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     state.board.saved.clear();
     saveSoon();
     void fitView();
+    schedulePipelines();
     btnBoard.classList.remove('iwb-btn-active');
   }
 
@@ -1395,6 +1406,108 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
 
   function sessionCardOf(sessionId) {
     return state.cards.find((card) => card.sessionId === sessionId) || null;
+  }
+
+  function portAnchor(card) {
+    return { x: card.x + card.w, y: card.y + 30 };
+  }
+
+  function targetAnchor(card) {
+    return { x: card.x, y: card.y + 30 };
+  }
+
+  function linkPath(from, to) {
+    const dx = Math.max(40, Math.abs(to.x - from.x) * 0.45);
+    return 'M ' + from.x + ' ' + from.y + ' C ' + (from.x + dx) + ' ' + from.y + ', ' + (to.x - dx) + ' ' + to.y + ', ' + to.x + ' ' + to.y;
+  }
+
+  /** Draw one curve per configured pipeline, plus a fat invisible hit area. */
+  function renderPipelines() {
+    while (linkLayer.firstChild) linkLayer.removeChild(linkLayer.firstChild);
+    for (const card of state.cards) {
+      const target = card.pipeline?.targetSessionId ? sessionCardOf(card.pipeline.targetSessionId) : null;
+      if (!target || target === card) continue;
+      const d = linkPath(portAnchor(card), targetAnchor(target));
+      const hit = document.createElementNS(SVG_NS, 'path');
+      hit.setAttribute('d', d);
+      hit.setAttribute('class', 'iwb-link-hit');
+      hit.addEventListener('pointerdown', (event) => {
+        event.stopPropagation();
+        openPipeMenu(card, event.currentTarget);
+      });
+      const path = document.createElementNS(SVG_NS, 'path');
+      path.setAttribute('d', d);
+      path.setAttribute('class', 'iwb-link');
+      if (card.pipeline.mode === 'draft') path.setAttribute('stroke-dasharray', '4 4');
+      linkLayer.append(hit, path);
+    }
+  }
+
+  let pipelineFrame = 0;
+  function schedulePipelines() {
+    if (pipelineFrame) return;
+    pipelineFrame = requestAnimationFrame(() => {
+      pipelineFrame = 0;
+      renderPipelines();
+    });
+  }
+
+  /** Drag from a card's port to another card to wire a pipeline. */
+  function bindPort(card) {
+    const port = card.el.querySelector('.iwb-port');
+    if (!port) return;
+    port.setAttribute('title', t('pipe.port'));
+    port.setAttribute('aria-label', t('pipe.port'));
+    port.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const canvasRect = canvas.getBoundingClientRect();
+      const point = (clientX, clientY) => ({
+        x: (clientX - canvasRect.left - state.pan.x) / state.zoom,
+        y: (clientY - canvasRect.top - state.pan.y) / state.zoom,
+      });
+      const temp = document.createElementNS(SVG_NS, 'path');
+      temp.setAttribute('class', 'iwb-link-temp');
+      linkLayer.appendChild(temp);
+      let hovered = null;
+      const draw = (clientX, clientY) => {
+        temp.setAttribute('d', linkPath(portAnchor(card), point(clientX, clientY)));
+      };
+      draw(event.clientX, event.clientY);
+      port.setPointerCapture?.(event.pointerId);
+
+      const onMove = (moveEvent) => {
+        draw(moveEvent.clientX, moveEvent.clientY);
+        const under = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY);
+        const candidate = under?.closest?.('.iwb-card');
+        const targetCard = candidate ? state.cards.find((entry) => entry.el === candidate) : null;
+        if (hovered && hovered !== targetCard) hovered.el.classList.remove('iwb-link-target');
+        hovered = targetCard && targetCard !== card && targetCard.sessionId ? targetCard : null;
+        if (hovered) hovered.el.classList.add('iwb-link-target');
+      };
+      const finish = (upEvent) => {
+        port.releasePointerCapture?.(event.pointerId);
+        port.removeEventListener('pointermove', onMove);
+        port.removeEventListener('pointerup', finish);
+        port.removeEventListener('pointercancel', cancel);
+        temp.remove();
+        if (hovered) {
+          hovered.el.classList.remove('iwb-link-target');
+          card.pipeline = { targetSessionId: hovered.sessionId, mode: card.pipeline?.mode || 'send' };
+          renderPipeBadge(card);
+          schedulePipelines();
+          saveSoon();
+          toast(t('pipe.created').replace('{name}', hovered.title || t('untitled')));
+        } else if (upEvent) {
+          toast(t('pipe.needTarget'));
+        }
+        hovered = null;
+      };
+      const cancel = () => finish(null);
+      port.addEventListener('pointermove', onMove);
+      port.addEventListener('pointerup', finish);
+      port.addEventListener('pointercancel', cancel);
+    });
   }
 
   function renderPipeBadge(card) {
@@ -1498,78 +1611,69 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     target.pipeDepth = depth;
   }
 
+  /** Click a pipeline curve: switch its delivery mode or remove it. */
   function openPipeMenu(card, anchor) {
     if (pipePop) {
       closePipeMenu();
       return;
     }
-    const targets = state.cards.filter((other) => other !== card && other.sessionId && other.kind !== 'note');
-    const pop = el('div', 'iwb-popover iwb-pipe');
+    const target = sessionCardOf(card.pipeline?.targetSessionId);
+    if (!target) return;
+    const pop = el('div', 'iwb-popover iwb-link-menu');
     pop.setAttribute('role', 'dialog');
     pop.setAttribute('aria-label', t('pipe.title'));
     const head = el('div', 'iwb-popover-head');
     head.textContent = t('pipe.title');
-    pop.appendChild(head);
+    const status = el('div', 'iwb-popover-note');
+    status.textContent = t('pipe.linked').replace('{name}', target.title || t('untitled'));
+    pop.append(head, status);
 
-    const current = card.pipeline?.targetSessionId;
-    if (!targets.length) {
-      const note = el('div', 'iwb-popover-note');
-      note.textContent = t('pipe.none');
-      pop.appendChild(note);
-    }
-    const addRow = (label, description, onPick, isCurrent) => {
-      const row = el('button', 'iwb-model-row' + (isCurrent ? ' current' : ''));
+    const mode = card.pipeline.mode === 'draft' ? 'draft' : 'send';
+    const modes = [
+      { id: 'send', label: t('pipe.send'), hint: t('pipe.sendHint') },
+      { id: 'draft', label: t('pipe.draft'), hint: t('pipe.draftHint') },
+    ];
+    for (const option of modes) {
+      const row = el('button', 'iwb-model-row' + (mode === option.id ? ' current' : ''));
       row.type = 'button';
-      row.innerHTML = '<span class="iwb-model-main"><span class="iwb-model-name"></span><span class="iwb-model-desc"></span></span>' + (isCurrent ? '<span class="iwb-check">✓</span>' : '');
-      row.querySelector('.iwb-model-name').textContent = label;
-      row.querySelector('.iwb-model-desc').textContent = description;
+      row.innerHTML = '<span class="iwb-model-main"><span class="iwb-model-name"></span><span class="iwb-model-desc"></span></span>' + (mode === option.id ? '<span class="iwb-check">✓</span>' : '');
+      row.querySelector('.iwb-model-name').textContent = option.label;
+      row.querySelector('.iwb-model-desc').textContent = option.hint;
       row.addEventListener('click', (event) => {
         event.stopPropagation();
+        card.pipeline = { ...card.pipeline, mode: option.id };
+        renderPipeBadge(card);
+        schedulePipelines();
+        saveSoon();
         closePipeMenu();
-        onPick();
+        toast(option.id === 'draft' ? t('pipe.modeDraft') : t('pipe.modeSend'));
       });
       pop.appendChild(row);
-    };
+    }
 
-    for (const target of targets) {
-      addRow(
-        target.title || t('untitled'),
-        target.workspace || t('workspace.none'),
-        () => {
-          card.pipeline = { targetSessionId: target.sessionId, mode: card.pipeline?.mode || 'send' };
-          renderPipeBadge(card);
-          saveSoon();
-          toast(t('pipe.linked').replace('{name}', target.title || t('untitled')));
-        },
-        current === target.sessionId
-      );
-    }
-    if (card.pipeline?.targetSessionId) {
-      addRow(
-        card.pipeline.mode === 'draft' ? t('pipe.send') : t('pipe.draft'),
-        card.pipeline.mode === 'draft' ? t('pipe.modeDraftHint') : t('pipe.modeSendHint'),
-        () => {
-          card.pipeline = { ...card.pipeline, mode: card.pipeline.mode === 'draft' ? 'send' : 'draft' };
-          saveSoon();
-          toast(card.pipeline.mode === 'draft' ? t('pipe.draft') : t('pipe.send'));
-        },
-        false
-      );
-      addRow(t('pipe.off'), '', () => {
-        card.pipeline = null;
-        renderPipeBadge(card);
-        saveSoon();
-      }, false);
-    }
+    const remove = el('button', 'iwb-model-row iwb-link-remove');
+    remove.type = 'button';
+    remove.innerHTML = '<span class="iwb-model-main"><span class="iwb-model-name"></span></span>';
+    remove.querySelector('.iwb-model-name').textContent = t('pipe.remove');
+    remove.addEventListener('click', (event) => {
+      event.stopPropagation();
+      card.pipeline = null;
+      renderPipeBadge(card);
+      schedulePipelines();
+      saveSoon();
+      closePipeMenu();
+      toast(t('pipe.removed'));
+    });
+    pop.appendChild(remove);
 
     const rect = anchor.getBoundingClientRect();
-    pop.style.left = Math.round(Math.max(8, Math.min(rect.left - 80, window.innerWidth - 280))) + 'px';
-    pop.style.top = Math.round(rect.bottom + 6) + 'px';
+    pop.style.left = Math.round(Math.max(8, Math.min(rect.left + rect.width / 2 - 110, window.innerWidth - 240))) + 'px';
+    pop.style.top = Math.round(rect.top + rect.height + 8) + 'px';
     document.body.appendChild(pop);
     pipePop = pop;
     const measured = pop.getBoundingClientRect();
     if (measured.bottom > window.innerHeight - 8) {
-      pop.style.top = Math.max(8, Math.round(rect.top - measured.height - 6)) + 'px';
+      pop.style.top = Math.max(8, Math.round(rect.top - measured.height - 8)) + 'px';
     }
   }
 
@@ -1594,6 +1698,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
       /* the session scope may already be gone */
     }
     state.cards = state.cards.filter((c) => c !== card);
+    schedulePipelines();
     if (state.selected.delete(card.id)) renderBatchBar();
     if (state.focusedId === card.id) {
       state.focusedId = null;
@@ -2298,6 +2403,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
           node.style.left = nx + 'px';
           node.style.top = ny + 'px';
         }
+        schedulePipelines();
       };
       const up = () => {
         interactionActive = false;
@@ -2456,6 +2562,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     updateEmptyState();
     syncApprovalSessions();
     updateTodoBar();
+    schedulePipelines();
     // The Host copy wins when it is newer (other window, other device, or a
     // previous browser session whose site data was cleared). Drop the restore's
     // pending write first: it must not fence off the initial remote read.

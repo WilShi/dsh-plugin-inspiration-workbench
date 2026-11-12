@@ -1,5 +1,10 @@
 const ICONS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
+  flow: '<path d="M4 7h9l-2-2"/><path d="M13 7l-2 2"/><circle cx="18" cy="7" r="2.4"/><path d="M4 17h9l-2-2"/><path d="M13 17l-2 2"/><circle cx="18" cy="17" r="2.4"/>',
+  more: '<circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/>',
+  canvas: '<rect x="3" y="7" width="14" height="14" rx="2"/><path d="M7 7V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-2"/>',
+  quote: '<path d="M7 7h5v5a4 4 0 0 1-4 4H7"/><path d="M15 7h5v5a4 4 0 0 1-4 4h-1"/>',
+  board: '<rect x="3" y="4" width="5.5" height="16" rx="1.4"/><rect x="9.5" y="4" width="5.5" height="11" rx="1.4"/><rect x="16" y="4" width="5" height="7" rx="1.4"/>',
   arrange:
     '<rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/>',
   fit: '<path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/>',

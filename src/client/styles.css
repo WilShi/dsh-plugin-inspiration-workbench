@@ -202,7 +202,7 @@
   font-size: 10px; line-height: 15px; padding: 0 4px; flex: 0 0 auto; color: var(--dsw-alias-label-secondary);
   background: var(--dsw-alias-bg-layer-2); border: .5px solid var(--dsw-alias-border-l2); border-radius: 5px;
 }
-.iwb-actions { display: flex; gap: 0; flex: 0 0 auto; opacity: .62; transition: opacity .12s; }
+.iwb-actions { display: flex; gap: 0; flex: 0 0 auto; opacity: .92; transition: opacity .12s; }
 .iwb-card:hover .iwb-actions,
 .iwb-card:focus-within .iwb-actions,
 .iwb-card.iwb-focus .iwb-actions { opacity: 1; }
@@ -212,10 +212,11 @@
 .iwb-more .iwb-model-row { gap: 8px; }
 .iwb-more-ico { display: inline-flex; color: var(--dsw-alias-label-tertiary); }
 .iwb-actions button {
-  width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center;
-  color: var(--dsw-alias-label-tertiary); background: none; border: 0; cursor: pointer;
+  width: 23px; height: 23px; border-radius: 6px; display: grid; place-items: center;
+  color: var(--dsw-alias-label-secondary); background: none; border: 0; cursor: pointer;
 }
 .iwb-actions button:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.iwb-actions button:focus-visible { outline: 2px solid var(--dsw-alias-label-deep-diving); outline-offset: -1px; }
 
 .iwb-body {
   flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 12px 12px 4px;
@@ -453,6 +454,33 @@
   border: .5px solid var(--dsw-alias-border-l1);
 }
 .iwb-msg-attach-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── pipeline edges ───────────────────────────────────────────────── */
+.iwb-links {
+  position: absolute; left: 0; top: 0; width: 1px; height: 1px;
+  overflow: visible; pointer-events: none; z-index: 1;
+}
+.iwb-links path.iwb-link {
+  fill: none; stroke: var(--dsw-alias-label-deep-diving); stroke-width: 1.6;
+  opacity: .55; pointer-events: stroke; cursor: pointer;
+}
+.iwb-links path.iwb-link:hover { opacity: .95; stroke-width: 2; }
+.iwb-links path.iwb-link-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
+.iwb-links path.iwb-link-temp { fill: none; stroke: var(--dsw-alias-label-deep-diving); stroke-width: 2; stroke-dasharray: 5 4; opacity: .9; }
+.iwb-port {
+  position: absolute; right: -7px; top: 30px; width: 14px; height: 14px;
+  border-radius: 50%; border: 1.5px solid var(--dsw-alias-label-deep-diving);
+  background: var(--dsw-alias-bg-layer-1); cursor: crosshair;
+  opacity: .55; transition: opacity .12s, transform .12s; z-index: 3;
+}
+.iwb-card:hover .iwb-port, .iwb-card.iwb-focus .iwb-port, .iwb-port:hover { opacity: 1; }
+.iwb-port::after {
+  content: "→"; position: absolute; inset: 0; display: grid; place-items: center;
+  font-size: 9px; line-height: 1; color: var(--dsw-alias-label-deep-diving);
+}
+.iwb-card.iwb-link-target { outline: 2px dashed var(--dsw-alias-label-deep-diving); outline-offset: 3px; }
+.iwb-link-menu { min-width: 230px; }
+.iwb-link-remove .iwb-model-name { color: var(--dsw-alias-state-error-primary); }
 
 /* ── pipeline ─────────────────────────────────────────────────────── */
 .iwb-pipe-badge {

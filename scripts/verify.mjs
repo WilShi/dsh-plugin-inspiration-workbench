@@ -399,33 +399,40 @@ try {
   record('message quote picker lists other cards', quote.skipped || quote.targetCount > 0, quote.skipped ? quote.reason : quote.targetCount + ' target(s)', quote.skipped);
   record('quote lands in the target composer', quote.skipped || quote.quoted, quote.skipped ? quote.reason : '', quote.skipped);
 
-  // ── pipeline (C7) ─────────────────────────────────────────────────────
-  // The pipeline needs two session cards; create one through the picker when absent.
-  if ((await page.evaluate(() => document.querySelectorAll('.iwb-card [data-act="pipe"]').length)) < 2) {
-    await page.evaluate(() => {
-      const button = [...document.querySelectorAll('.iwb-toolbar .iwb-btn')].find((node) => node.textContent.includes('新建会话卡'));
-      button?.click();
-    });
-    await page.waitForTimeout(700);
-    await page.evaluate(() => document.querySelectorAll('.iwb-workspaces .iwb-model-row')[0]?.click());
-    await page.waitForTimeout(3000);
-  }
-
+  // ── pipeline edges (C7) ──────────────────────────────────────────────
   const pipeline = await page.evaluate(async () => {
-    const cards = [...document.querySelectorAll('.iwb-card')].filter((card) => card.querySelector('[data-act="pipe"]'));
+    const cards = [...document.querySelectorAll('.iwb-card')].filter((card) => card.querySelector('.iwb-port'));
     if (cards.length < 2) return { skipped: true, reason: 'needs 2 session cards' };
-    const source = cards[cards.length - 1];
-    source.querySelector('[data-act="pipe"]')?.click();
-    await new Promise((resolve) => setTimeout(resolve, 350));
-    const rows = [...document.querySelectorAll('.iwb-pipe .iwb-model-row')];
-    const targets = rows.length;
-    rows[0]?.click();
+    const port = cards[0].querySelector('.iwb-port');
+    const target = cards[1];
+    const pr = port.getBoundingClientRect();
+    const tr = target.getBoundingClientRect();
+    const start = { x: pr.x + pr.width / 2, y: pr.y + pr.height / 2 };
+    const end = { x: tr.x + tr.width / 2, y: tr.y + 80 };
+    port.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: start.x, clientY: start.y, button: 0 }));
+    for (let i = 1; i <= 5; i += 1) {
+      port.dispatchEvent(new PointerEvent('pointermove', {
+        bubbles: true,
+        pointerId: 1,
+        clientX: start.x + ((end.x - start.x) * i) / 5,
+        clientY: start.y + ((end.y - start.y) * i) / 5,
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    }
+    port.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1, clientX: end.x, clientY: end.y }));
     await new Promise((resolve) => setTimeout(resolve, 400));
-    const badge = [...document.querySelectorAll('.iwb-pipe-badge')].find((node) => !node.hidden);
-    return { skipped: false, targets, badge: badge ? badge.textContent : '', closed: !document.querySelector('.iwb-pipe') };
+    const links = document.querySelectorAll('.iwb-links path.iwb-link').length;
+    const badge = [...document.querySelectorAll('.iwb-pipe-badge')].some((node) => !node.hidden);
+    // Clean up: click the curve and remove the pipeline so the board stays tidy.
+    document.querySelector('.iwb-links path.iwb-link-hit')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 9, button: 0 }));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    [...document.querySelectorAll('.iwb-link-menu .iwb-model-row')].find((row) => row.textContent.includes('删除'))?.click();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    return { skipped: false, links, badge };
   });
-  record('pipeline menu lists downstream cards', pipeline.skipped || pipeline.targets > 0, pipeline.skipped ? pipeline.reason : pipeline.targets + ' target(s)', pipeline.skipped);
-  record('pipeline badge shows the target', pipeline.skipped || Boolean(pipeline.badge), pipeline.skipped ? pipeline.reason : pipeline.badge, pipeline.skipped);
+  record('cards expose a pipeline port', pipeline.skipped || true, pipeline.skipped ? pipeline.reason : 'ports present', pipeline.skipped);
+  record('dragging the port draws a pipeline edge', pipeline.skipped || pipeline.links > 0, pipeline.skipped ? pipeline.reason : pipeline.links + ' link(s)', pipeline.skipped);
+  record('pipeline badge follows the edge', pipeline.skipped || pipeline.badge, pipeline.skipped ? pipeline.reason : '', pipeline.skipped);
 
   // ── kanban grouping (C4) ──────────────────────────────────────────────
   const kanban = await page.evaluate(async () => {

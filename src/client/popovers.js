@@ -213,6 +213,7 @@ export function createArrangeMenu(deps) {
     defaultSize,
     gap,
     anchor,
+    afterArrange,
   } = deps;
   const el = makeEl;
   const DEFAULT_W = defaultSize.w;
@@ -275,6 +276,7 @@ export function createArrangeMenu(deps) {
     }
     saveSoon();
     void fitView();
+    afterArrange?.();
     toast(t('arrange.done'));
   }
 
