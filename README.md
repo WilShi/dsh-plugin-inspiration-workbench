@@ -38,9 +38,9 @@ DSH 一次只能打开一个会话：想同时看三条线的进展，只能来�
 |---|---|
 | ![fanout](docs/screenshots/pipeline-fanout.png) | ![note target](docs/screenshots/pipeline-note.png) |
 
-| 端口在四边中点，随便哪个方向都能连 |
-|---|
-| ![ports](docs/screenshots/pipeline-ports.png) |
+| 端口在四边中点，静止时是极淡的小点 | 悬停卡片后展开成带光环的把手 |
+|---|---|
+| ![ports](docs/screenshots/pipeline-ports-dark.png) | ![ports hover](docs/screenshots/pipeline-ports-hover.png) |
 
 | 便签投递带标题和时间戳 | 便签可设为「只保留最新」 |
 |---|---|

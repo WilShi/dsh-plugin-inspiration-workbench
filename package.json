@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-inspiration-workbench",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": false,
   "type": "module",
   "description": "Open many DeepSeek Harness sessions side by side as draggable, stackable cards on a free canvas.",

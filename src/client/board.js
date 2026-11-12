@@ -1476,6 +1476,17 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     return dy > 0 ? 'top' : 'bottom';
   }
 
+  /** Small arrow head just outside the target edge, pointing into the card. */
+  function arrowPath(point, side) {
+    const normal = EDGE_NORMAL[side] || EDGE_NORMAL.left;
+    const perp = { x: -normal.y, y: normal.x };
+    const tip = { x: point.x - normal.x * 1, y: point.y - normal.y * 1 };
+    const base = { x: point.x + normal.x * 7, y: point.y + normal.y * 7 };
+    const left = { x: base.x + perp.x * 3.2, y: base.y + perp.y * 3.2 };
+    const right = { x: base.x - perp.x * 3.2, y: base.y - perp.y * 3.2 };
+    return 'M ' + tip.x + ' ' + tip.y + ' L ' + left.x + ' ' + left.y + ' L ' + right.x + ' ' + right.y + ' Z';
+  }
+
   function linkPath(from, to, fromSide, toSide) {
     const distance = Math.hypot(to.x - from.x, to.y - from.y);
     const bend = Math.max(36, Math.min(140, distance * 0.42));
@@ -1506,9 +1517,12 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
         });
         const path = document.createElementNS(SVG_NS, 'path');
         path.setAttribute('d', d);
-        path.setAttribute('class', 'iwb-link');
+        path.setAttribute('class', 'iwb-link' + (card.running ? ' iwb-link-active' : ''));
         if (target.mode === 'draft') path.setAttribute('stroke-dasharray', '4 4');
-        linkLayer.append(hit, path);
+        const arrow = document.createElementNS(SVG_NS, 'path');
+        arrow.setAttribute('d', arrowPath(edgeAnchor(targetCard, toSide), toSide));
+        arrow.setAttribute('class', 'iwb-link-arrow');
+        linkLayer.append(hit, path, arrow);
       }
     }
   }
