@@ -1665,12 +1665,15 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
           .replace('{title}', card.title || t('untitled'))
           .replace('{time}', canvasStamp())
           .replace('{text}', text);
-        area.value = area.value.trim() ? area.value.replace(/\s*$/, '\n\n') + block : block;
+        // 'replace' keeps the note as a single latest block (a summary pane);
+        // 'append' (default) grows a log of every delivery.
+        const replace = target.write === 'replace';
+        area.value = replace ? block : area.value.trim() ? area.value.replace(/\s*$/, '\n\n') + block : block;
         area.dispatchEvent(new Event('input', { bubbles: true }));
         targetCard.pipeDepth = depth;
         card.pipedFingerprints[key] = fingerprint;
         ensureVisible(targetCard);
-        toast(t('pipe.noted').replace('{name}', targetCard.title || t('untitled')));
+        toast(t(replace ? 'pipe.notedReplaced' : 'pipe.noted').replace('{name}', targetCard.title || t('untitled')));
         continue;
       }
 
@@ -1743,9 +1746,31 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
         pop.appendChild(row);
       }
     } else {
-      const statusRow = el('div', 'iwb-popover-note');
-      statusRow.textContent = t('pipe.noteHint');
-      pop.appendChild(statusRow);
+      const write = target.write === 'replace' ? 'replace' : 'append';
+      const writes = [
+        { id: 'append', label: t('pipe.noteAppend'), hint: t('pipe.noteAppendHint') },
+        { id: 'replace', label: t('pipe.noteReplace'), hint: t('pipe.noteReplaceHint') },
+      ];
+      for (const option of writes) {
+        const row = el('button', 'iwb-model-row' + (write === option.id ? ' current' : ''));
+        row.type = 'button';
+        row.innerHTML = '<span class="iwb-model-main"><span class="iwb-model-name"></span><span class="iwb-model-desc"></span></span>' + (write === option.id ? '<span class="iwb-check">✓</span>' : '');
+        row.querySelector('.iwb-model-name').textContent = option.label;
+        row.querySelector('.iwb-model-desc').textContent = option.hint;
+        row.addEventListener('click', (event) => {
+          event.stopPropagation();
+          const targets = pipeTargets(card).map((entry) =>
+            entry.kind === target.kind && entry.id === target.id ? { ...entry, write: option.id } : entry
+          );
+          setPipeTargets(card, targets);
+          renderPipeBadge(card);
+          schedulePipelines();
+          saveSoon();
+          closePipeMenu();
+          toast(option.id === 'replace' ? t('pipe.modeReplace') : t('pipe.modeAppend'));
+        });
+        pop.appendChild(row);
+      }
     }
 
     const remove = el('button', 'iwb-model-row iwb-link-remove');
