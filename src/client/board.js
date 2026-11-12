@@ -624,7 +624,11 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     node.dataset.sessionId = sessionId;
     card.el = node;
     world.appendChild(node);
-    node.appendChild(el('span', 'iwb-port'));
+    for (const side of ['top', 'right', 'bottom', 'left']) {
+      const port = el('span', 'iwb-port');
+      port.dataset.side = side;
+      node.appendChild(port);
+    }
     node.querySelector('.iwb-card-title').textContent = card.title;
     const bodyRegion = node.querySelector('.iwb-body');
     bodyRegion.tabIndex = 0;
@@ -1438,28 +1442,48 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     return target?.id || '';
   }
 
-  function addPipeTarget(card, targetCard) {
+  function addPipeTarget(card, targetCard, fromSide) {
     const kind = targetCard.kind === 'note' ? 'note' : 'session';
     const id = kind === 'note' ? targetCard.id : targetCard.sessionId;
     if (!id || targetCard === card) return false;
     const targets = pipeTargets(card).filter((target) => !(target.kind === kind && target.id === id));
     const expanded = targets.length !== pipeTargets(card).length;
-    targets.push({ kind, id, mode: 'send' });
+    targets.push({ kind, id, mode: 'send', from: fromSide || 'right' });
     setPipeTargets(card, targets);
     return !expanded;
   }
 
-  function portAnchor(card) {
-    return { x: card.x + card.w, y: card.y + 30 };
+  const EDGE_NORMAL = {
+    left: { x: -1, y: 0 },
+    right: { x: 1, y: 0 },
+    top: { x: 0, y: -1 },
+    bottom: { x: 0, y: 1 },
+  };
+
+  /** Anchor at the middle of one card edge. */
+  function edgeAnchor(card, side) {
+    if (side === 'left') return { x: card.x, y: card.y + card.h / 2 };
+    if (side === 'top') return { x: card.x + card.w / 2, y: card.y };
+    if (side === 'bottom') return { x: card.x + card.w / 2, y: card.y + card.h };
+    return { x: card.x + card.w, y: card.y + card.h / 2 };
   }
 
-  function targetAnchor(card) {
-    return { x: card.x, y: card.y + 30 };
+  /** Which edge of the target faces the source anchor. */
+  function sideFacing(fromPoint, target) {
+    const dx = target.x + target.w / 2 - fromPoint.x;
+    const dy = target.y + target.h / 2 - fromPoint.y;
+    if (Math.abs(dx) >= Math.abs(dy)) return dx > 0 ? 'left' : 'right';
+    return dy > 0 ? 'top' : 'bottom';
   }
 
-  function linkPath(from, to) {
-    const dx = Math.max(40, Math.abs(to.x - from.x) * 0.45);
-    return 'M ' + from.x + ' ' + from.y + ' C ' + (from.x + dx) + ' ' + from.y + ', ' + (to.x - dx) + ' ' + to.y + ', ' + to.x + ' ' + to.y;
+  function linkPath(from, to, fromSide, toSide) {
+    const distance = Math.hypot(to.x - from.x, to.y - from.y);
+    const bend = Math.max(36, Math.min(140, distance * 0.42));
+    const fromNormal = EDGE_NORMAL[fromSide] || EDGE_NORMAL.right;
+    const toNormal = EDGE_NORMAL[toSide] || EDGE_NORMAL.left;
+    const c1 = { x: from.x + fromNormal.x * bend, y: from.y + fromNormal.y * bend };
+    const c2 = { x: to.x + toNormal.x * bend, y: to.y + toNormal.y * bend };
+    return 'M ' + from.x + ' ' + from.y + ' C ' + c1.x + ' ' + c1.y + ', ' + c2.x + ' ' + c2.y + ', ' + to.x + ' ' + to.y;
   }
 
   /** Draw one curve per pipeline target, plus a fat invisible hit area each. */
@@ -1469,7 +1493,10 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
       for (const target of pipeTargets(card)) {
         const targetCard = cardOfPipeTarget(target);
         if (!targetCard || targetCard === card) continue;
-        const d = linkPath(portAnchor(card), targetAnchor(targetCard));
+        const fromSide = target.from || 'right';
+        const fromPoint = edgeAnchor(card, fromSide);
+        const toSide = sideFacing(fromPoint, targetCard);
+        const d = linkPath(fromPoint, edgeAnchor(targetCard, toSide), fromSide, toSide);
         const hit = document.createElementNS(SVG_NS, 'path');
         hit.setAttribute('d', d);
         hit.setAttribute('class', 'iwb-link-hit');
@@ -1497,8 +1524,11 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
 
   /** Drag from a card's port to another card (session or note) to wire it up. */
   function bindPort(card) {
-    const port = card.el.querySelector('.iwb-port');
-    if (!port) return;
+    const ports = [...card.el.querySelectorAll('.iwb-port')];
+    for (const port of ports) bindOnePort(card, port);
+  }
+
+  function bindOnePort(card, port) {
     port.setAttribute('title', t('pipe.port'));
     port.setAttribute('aria-label', t('pipe.port'));
     port.addEventListener('pointerdown', (event) => {
@@ -1509,12 +1539,15 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
         x: (clientX - canvasRect.left - state.pan.x) / state.zoom,
         y: (clientY - canvasRect.top - state.pan.y) / state.zoom,
       });
+      const fromSide = port.dataset.side || 'right';
+      const fromPoint = edgeAnchor(card, fromSide);
       const temp = document.createElementNS(SVG_NS, 'path');
       temp.setAttribute('class', 'iwb-link-temp');
       linkLayer.appendChild(temp);
       let hovered = null;
       const draw = (clientX, clientY) => {
-        temp.setAttribute('d', linkPath(portAnchor(card), point(clientX, clientY)));
+        const to = point(clientX, clientY);
+        temp.setAttribute('d', linkPath(fromPoint, to, fromSide, sideFacing(fromPoint, { x: to.x, y: to.y, w: 0, h: 0 })));
       };
       draw(event.clientX, event.clientY);
       try {
@@ -1545,7 +1578,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
         temp.remove();
         if (hovered) {
           hovered.el.classList.remove('iwb-link-target');
-          const created = addPipeTarget(card, hovered);
+          const created = addPipeTarget(card, hovered, fromSide);
           renderPipeBadge(card);
           schedulePipelines();
           saveSoon();

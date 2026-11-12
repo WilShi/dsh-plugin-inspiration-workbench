@@ -430,7 +430,11 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 300));
     return { skipped: false, links, badge };
   });
-  record('cards expose a pipeline port', pipeline.skipped || true, pipeline.skipped ? pipeline.reason : 'ports present', pipeline.skipped);
+  const portCount = await page.evaluate(() => {
+    const card = document.querySelector('.iwb-card:not(.iwb-card-note)') || document.querySelector('.iwb-card');
+    return card ? card.querySelectorAll('.iwb-port').length : 0;
+  });
+  record('session cards expose ports on all four edges', portCount === 0 || portCount === 4, `${portCount} port(s)`, portCount === 0);
 
   // Fan-out + note downstream: create a note, wire the session card to it, then
   // confirm the curve and the "N downstream" badge, and reload to prove the

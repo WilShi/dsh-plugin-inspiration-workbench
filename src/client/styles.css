@@ -471,17 +471,24 @@
 .iwb-links path.iwb-link:hover { opacity: .95; stroke-width: 2; }
 .iwb-links path.iwb-link-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
 .iwb-links path.iwb-link-temp { fill: none; stroke: var(--dsw-alias-label-deep-diving); stroke-width: 2; stroke-dasharray: 5 4; opacity: .9; }
+/* Connection handles: one at the middle of each edge, always visible. */
 .iwb-port {
-  position: absolute; right: -5px; top: 33px; width: 12px; height: 12px;
-  border-radius: 50%; border: 1.5px solid var(--dsw-alias-label-deep-diving);
+  position: absolute; width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid var(--dsw-alias-label-deep-diving);
   background: var(--dsw-alias-bg-layer-1); cursor: crosshair;
-  opacity: .55; transition: opacity .12s, transform .12s; z-index: 3;
+  opacity: .62; transition: opacity .12s, transform .12s, background .12s; z-index: 3;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-bg-layer-1) 70%, transparent);
 }
-.iwb-card:hover .iwb-port, .iwb-card.iwb-focus .iwb-port, .iwb-port:hover { opacity: 1; }
+.iwb-card:hover .iwb-port, .iwb-card.iwb-focus .iwb-port { opacity: .95; }
+.iwb-port:hover { opacity: 1; transform: scale(1.15); background: var(--dsw-alias-bg-layer-2); }
 .iwb-port::after {
-  content: "→"; position: absolute; inset: 0; display: grid; place-items: center;
-  font-size: 8px; line-height: 1; color: var(--dsw-alias-label-deep-diving);
+  content: "+"; position: absolute; inset: 0; display: grid; place-items: center;
+  font-size: 11px; line-height: 1; font-weight: 500; color: var(--dsw-alias-label-deep-diving);
 }
+.iwb-port[data-side="right"] { right: -8px; top: calc(50% - 8px); }
+.iwb-port[data-side="left"] { left: -8px; top: calc(50% - 8px); }
+.iwb-port[data-side="top"] { top: -8px; left: calc(50% - 8px); }
+.iwb-port[data-side="bottom"] { bottom: -8px; left: calc(50% - 8px); }
 .iwb-card.iwb-link-target { outline: 2px dashed var(--dsw-alias-label-deep-diving); outline-offset: 3px; }
 .iwb-card-note.iwb-link-target { outline-style: solid; }
 .iwb-link-menu { min-width: 230px; }
