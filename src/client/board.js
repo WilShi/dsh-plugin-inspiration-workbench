@@ -29,6 +29,8 @@ function formatElapsed(ms) {
   return Math.floor(seconds / 60) + 'm' + String(seconds % 60).padStart(2, '0') + 's';
 }
 
+
+
 export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
   const { appendMarkdownLite } = createMarkdown({ t });
   const state = {
@@ -1903,6 +1905,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
   }
 
   function markDirty(card) {
+    hydratePending = false;
     if (disposed) return;
     dirty.add(card);
     if (frame) return;
@@ -2666,6 +2669,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
 
   function save() {
     if (disposed || suppressSave) return;
+    if (hydratePending) return;
     try {
       const payload = layoutPayload();
       localUpdatedAt = payload.updatedAt;
@@ -2694,8 +2698,16 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     }
     approvals?.setEnabled?.(state.settings.inlineApprovals);
     if (!saved || !Array.isArray(saved.cards)) {
+      hydratePending = true;
       syncApprovalSessions();
-      void syncFromRemote().then(() => startRemoteSync());
+      void syncFromRemote().then((applied) => {
+        hydratePending = false;
+        if (!applied && !saveTimer) {
+          // Host had nothing (or was unreachable): the empty board is legitimately
+          // ours now, so the next interaction may persist it.
+        }
+        startRemoteSync();
+      });
       void loadCanvases();
       return false;
     }
@@ -2841,6 +2853,9 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
   let interactionActive = false;
   let remoteRev = 0;
   let localUpdatedAt = 0;
+  // True between "no local cache" and the first Host sync: saving in that window
+  // would push an empty board over the Host copy (real data loss).
+  let hydratePending = false;
   let applyingRemote = false;
   let firstRemoteSync = true;
   // Own writes echo back over the event stream; the id lets us ignore them so a

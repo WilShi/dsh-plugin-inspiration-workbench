@@ -221,6 +221,8 @@ function noticeOfTurnEnd(reason) {
 }
 
 /** Fold one loaded event window into flat transcript items. */
+
+
 function fold(entries) {
   const items = [];
   const tools = new Map();
@@ -373,9 +375,14 @@ function fold(entries) {
   // process row at the tail of its turn. The native conversation renders
   // [user bubble] → [process row] → [reply], so anchor each row right after the
   // last user message that precedes its own turn's first content.
+  // Each process row is moved at most once. Moving one row shifts the others,
+  // and recomputing an anchor after every move used to bounce the same row
+  // between two slots forever on long, steered transcripts (host freeze).
+  const placed = new Set();
   for (let index = 0; index < items.length; index += 1) {
     const entry = items[index];
-    if (entry.k !== 'turnProcess') continue;
+    if (entry.k !== 'turnProcess' || placed.has(entry)) continue;
+    placed.add(entry);
     const first = items.findIndex((candidate) => candidate.k !== 'turnProcess' && candidate.turn === entry.turn);
     if (first < 0) continue;
     let anchor = first;
@@ -387,8 +394,10 @@ function fold(entries) {
     }
     if (anchor === index) continue;
     items.splice(index, 1);
-    items.splice(index < anchor ? anchor - 1 : anchor, 0, entry);
-    index = Math.max(0, (index < anchor ? anchor - 1 : anchor));
+    const insertAt = index < anchor ? anchor - 1 : anchor;
+    items.splice(insertAt, 0, entry);
+    // Resume scanning from the row we just placed; do not jump backwards past it.
+    index = Math.max(index, insertAt);
   }
 
   const truncated = items.length > MAX_ITEMS;
