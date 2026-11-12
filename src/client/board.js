@@ -1655,11 +1655,17 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
       const targetCard = cardOfPipeTarget(target);
 
       // A note downstream just collects the text, whatever its mode says.
+      // Several cards may land in the same note, so each delivery is wrapped in
+      // a titled block with a timestamp.
       if (target.kind === 'note') {
         if (!targetCard) continue;
         const area = targetCard.el?.querySelector('.iwb-note-input');
         if (!area) continue;
-        area.value = area.value ? area.value.replace(/\s*$/, '\n\n') + text : text;
+        const block = t('pipe.noteBlock')
+          .replace('{title}', card.title || t('untitled'))
+          .replace('{time}', canvasStamp())
+          .replace('{text}', text);
+        area.value = area.value.trim() ? area.value.replace(/\s*$/, '\n\n') + block : block;
         area.dispatchEvent(new Event('input', { bubbles: true }));
         targetCard.pipeDepth = depth;
         card.pipedFingerprints[key] = fingerprint;
