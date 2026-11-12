@@ -17,7 +17,7 @@ function resolveEsbuild() {
   }
   // Dev-only fallback for a checkout without a local devDependency. Set
   // ESBUILD_PACKAGE_DIR to any directory whose node_modules contains esbuild.
-  const siblings = [process.env.ESBUILD_PACKAGE_DIR].filter(Boolean)
+  const siblings = [process.env.ESBUILD_PACKAGE_DIR, '/Users/wilson/Documents/Code/dsh-investment-workbench'].filter(Boolean)
   for (const sibling of siblings) {
     try {
       const fromSibling = createRequire(sibling + '/package.json')

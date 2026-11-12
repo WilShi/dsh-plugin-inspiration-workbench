@@ -1,18 +1,22 @@
 {
   "name": "dsh-plugin-inspiration-workbench",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": false,
   "type": "module",
   "description": "Open many DeepSeek Harness sessions side by side as draggable, stackable cards on a free canvas.",
   "keywords": [
+    "board",
+    "canvas",
+    "deepseek",
+    "deepseek-harness",
     "dsh",
     "dsh-plugin",
-    "deepseek-harness",
-    "deepseek",
-    "workbench",
-    "canvas",
+    "kanban",
     "multi-session",
-    "ui"
+    "pipeline",
+    "ui",
+    "workbench",
+    "workspace"
   ],
   "license": "MIT",
   "author": "WilShi",

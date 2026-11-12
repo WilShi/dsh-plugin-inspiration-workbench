@@ -6,7 +6,7 @@
  * can never re-create the composer or the textarea a user is typing into.
  */
 
-import { fetchRemoteLayout, pushRemoteLayout, subscribeRemoteLayout } from './persistence';
+import { fetchRemoteLayout, pushRemoteLayout, subscribeRemoteLayout, fetchCanvases, pushCanvases } from './persistence';
 
 import { clamp, el } from './dom';
 import { icon } from './icons';
@@ -17,6 +17,7 @@ import { createCardTools } from './card-tools';
 import { createModelMenu, createArrangeMenu, createSettingsMenu, createWorkspaceMenu } from './popovers';
 
 const STORAGE_KEY = 'dsh.inspiration-workbench.v1';
+const CANVAS_KEY = 'dsh.inspiration-workbench.canvases.v1';
 const DEFAULT_W = 380;
 const DEFAULT_H = 500;
 const GAP = 20;
@@ -43,6 +44,8 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     focusedId: null,
     savedView: false,
     board: { active: false, key: 'status', saved: new Map() },
+    canvases: [],
+    activeCanvas: null,
   };
 
   // Turn expansion survives a remote layout apply (which rebuilds card DOM):
@@ -116,6 +119,8 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
 
   const btnNew = el('button', 'iwb-btn primary', icon('plus', 13) + '<span>' + t('new') + '</span>');
   btnNew.type = 'button';
+  const btnCanvas = el('button', 'iwb-btn', icon('canvas', 13) + '<span>' + t('canvas') + '</span>');
+  btnCanvas.type = 'button';
   const btnArrange = el('button', 'iwb-btn', icon('arrange', 13) + '<span>' + t('arrange') + '</span>');
   btnArrange.type = 'button';
   const btnBoard = el('button', 'iwb-btn', icon('board', 13) + '<span>' + t('boardMode') + '</span>');
@@ -132,7 +137,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
   const btnSettings = el('button', 'iwb-btn', icon('sliders', 13) + '<span>' + t('settings') + '</span>');
   btnSettings.type = 'button';
   const actions = el('div', 'iwb-toolbar-actions');
-  actions.append(todoBar, btnNew, btnNote, btnArrange, btnBoard, btnFit, btnCollapse, btnSettings);
+  actions.append(todoBar, btnNew, btnNote, btnCanvas, btnArrange, btnBoard, btnFit, btnCollapse, btnSettings);
   toolbar.append(titles, hint, actions);
 
   const canvas = el('div', 'iwb-canvas');
@@ -496,11 +501,14 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
       '<button type="button" data-act="pipe" title="' + t('pipe.title') + '" aria-label="' + t('pipe.title') + '">' + icon('flow') + '</button>' +
       '<button type="button" data-act="outline" title="' + t('card.outline') + '" aria-label="' + t('card.outline') + '">' + icon('list') + '</button>' +
       '<button type="button" data-act="search" title="' + t('card.search') + '" aria-label="' + t('card.search') + '">' + icon('search') + '</button>' +
+      '<button type="button" data-act="more" class="iwb-act-more" title="' + t('card.more') + '" aria-label="' + t('card.more') + '">' + icon('more') + '</button>' +
+      '<button type="button" data-act="close" title="' + t('remove') + '" aria-label="' + t('remove') + '">' + icon('close') + '</button>' +
+      '<span class="iwb-acts-more" hidden>' +
       '<button type="button" data-act="pin" title="' + t('card.pin') + '" aria-label="' + t('card.pin') + '">' + icon('pin') + '</button>' +
       '<button type="button" data-act="copy" title="' + t('card.copy') + '" aria-label="' + t('card.copy') + '">' + icon('copy') + '</button>' +
       '<button type="button" data-act="detach" title="' + t('detach') + '" aria-label="' + t('detach') + '" style="display:none">' + icon('layers') + '</button>' +
       '<button type="button" data-act="open" title="' + t('openNative') + '" aria-label="' + t('openNative') + '">' + icon('open') + '</button>' +
-      '<button type="button" data-act="close" title="' + t('remove') + '" aria-label="' + t('remove') + '">' + icon('close') + '</button>' +
+      '</span>' +
       '</span>' +
       '</header>' +
       '<div class="iwb-search" hidden><input class="iwb-search-input" type="text" /><span class="iwb-search-count"></span></div>' +
@@ -944,6 +952,253 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     toast(t('batch.closed').replace('{n}', String(picked.length)));
   }
 
+  // ── named canvases ───────────────────────────────────────────────────
+  let canvasPop = null;
+
+  function closeCanvasMenu() {
+    canvasPop?.remove();
+    canvasPop = null;
+  }
+
+  function loadLocalCanvases() {
+    try {
+      const raw = window.localStorage.getItem(CANVAS_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || !Array.isArray(parsed.canvases)) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  function syncCanvases() {
+    state.canvases = Array.isArray(state.canvases) ? state.canvases : [];
+    return state.canvases;
+  }
+
+  function storeCanvases() {
+    const payload = { canvases: state.canvases, activeCanvas: state.activeCanvas };
+    try {
+      window.localStorage.setItem(CANVAS_KEY, JSON.stringify(payload));
+    } catch {
+      /* private mode: the Host copy still holds it */
+    }
+    void pushCanvases(payload.canvases, payload.activeCanvas);
+    renderCanvasButton();
+  }
+
+  function renderCanvasButton() {
+    const active = syncCanvases().find((canvas) => canvas.id === state.activeCanvas);
+    // Keep the verb ("画布") first so the affordance never disappears, and append
+    // the active canvas name for orientation.
+    btnCanvas.querySelector('span').textContent = active ? t('canvas') + ' · ' + active.name : t('canvas');
+    btnCanvas.title = active ? t('canvas.active').replace('{name}', active.name) : t('canvas.title');
+    btnCanvas.classList.toggle('iwb-btn-active', Boolean(active));
+  }
+
+  /** Only canvases that actually carry a board are switchable. */
+  function usableCanvases(list) {
+    return (Array.isArray(list) ? list : []).filter(
+      (canvas) => canvas && typeof canvas.id === 'string' && canvas.layout && Array.isArray(canvas.layout.cards)
+    );
+  }
+
+  /** Merge Host and localStorage copies, preferring whichever knows the layout. */
+  function mergeCanvases(remoteList, localList) {
+    const byId = new Map();
+    for (const canvas of usableCanvases(localList)) byId.set(canvas.id, canvas);
+    for (const canvas of usableCanvases(remoteList)) {
+      const existing = byId.get(canvas.id);
+      if (!existing || (canvas.savedAt || 0) >= (existing.savedAt || 0)) byId.set(canvas.id, canvas);
+    }
+    return [...byId.values()].sort((left, right) => (left.savedAt || 0) - (right.savedAt || 0));
+  }
+
+  async function loadCanvases() {
+    const remote = await fetchCanvases();
+    const local = loadLocalCanvases();
+    const remoteCanvases = remote?.canvases || [];
+    const localCanvases = local?.canvases || [];
+    const merged = mergeCanvases(remoteCanvases, localCanvases);
+    state.canvases = merged;
+    state.activeCanvas = remote?.activeCanvas || local?.activeCanvas || null;
+    if (!merged.some((canvas) => canvas.id === state.activeCanvas)) state.activeCanvas = null;
+    renderCanvasButton();
+  }
+
+  function canvasStamp() {
+    return new Date().toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  /** Save the current board as a brand new named canvas. */
+  function saveCanvasAs(name) {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) {
+      toast(t('canvas.nameRequired'));
+      return false;
+    }
+    state.canvases = syncCanvases().filter((canvas) => canvas.name !== trimmed);
+    const canvas = {
+      id: 'cv' + Date.now().toString(36),
+      name: trimmed,
+      savedAt: Date.now(),
+      layout: layoutPayload(),
+    };
+    state.canvases = [...state.canvases, canvas];
+    state.activeCanvas = canvas.id;
+    storeCanvases();
+    toast(t('canvas.saved').replace('{name}', trimmed));
+    return true;
+  }
+
+  /** Overwrite the canvas the board is currently bound to. */
+  function updateActiveCanvas() {
+    const active = syncCanvases().find((canvas) => canvas.id === state.activeCanvas);
+    if (!active) return false;
+    active.layout = layoutPayload();
+    active.savedAt = Date.now();
+    storeCanvases();
+    toast(t('canvas.updated').replace('{name}', active.name));
+    return true;
+  }
+
+  function switchCanvas(id) {
+    const target = syncCanvases().find((canvas) => canvas.id === id);
+    if (!target) return;
+    // Keep unsaved work: fold the current board back into its canvas first.
+    if (state.activeCanvas && state.activeCanvas !== id) {
+      const current = syncCanvases().find((canvas) => canvas.id === state.activeCanvas);
+      if (current) {
+        current.layout = layoutPayload();
+        current.savedAt = Date.now();
+      }
+    }
+    state.activeCanvas = id;
+    storeCanvases();
+    closeCanvasMenu();
+    try {
+      applyLayout(target.layout, { toast: t('canvas.switched').replace('{name}', target.name) });
+      save();
+      void fitView();
+    } catch {
+      toast(t('canvas.broken'));
+    }
+  }
+
+  function deleteCanvas(id) {
+    const target = syncCanvases().find((canvas) => canvas.id === id);
+    state.canvases = syncCanvases().filter((canvas) => canvas.id !== id);
+    if (state.activeCanvas === id) state.activeCanvas = null;
+    storeCanvases();
+    if (target) toast(t('canvas.deleted').replace('{name}', target.name));
+  }
+
+  function openCanvasMenu() {
+    if (canvasPop) {
+      closeCanvasMenu();
+      return;
+    }
+    const pop = el('div', 'iwb-popover iwb-canvas-menu');
+    pop.setAttribute('role', 'dialog');
+    pop.setAttribute('aria-label', t('canvas.title'));
+    const head = el('div', 'iwb-popover-head');
+    head.textContent = t('canvas.title');
+    pop.appendChild(head);
+
+    const active = syncCanvases().find((canvas) => canvas.id === state.activeCanvas);
+    const status = el('div', 'iwb-popover-note');
+    status.textContent = active ? t('canvas.current').replace('{name}', active.name) : t('canvas.unsaved');
+    pop.appendChild(status);
+
+    const form = el('div', 'iwb-canvas-form');
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'iwb-canvas-input';
+    input.placeholder = t('canvas.placeholder');
+    input.value = active ? active.name : '';
+    const saveBtn = el('button', 'iwb-btn primary');
+    saveBtn.type = 'button';
+    saveBtn.textContent = t('canvas.save');
+    saveBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (saveCanvasAs(input.value)) {
+        closeCanvasMenu();
+      }
+    });
+    input.addEventListener('keydown', (event) => {
+      event.stopPropagation();
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        if (saveCanvasAs(input.value)) closeCanvasMenu();
+      }
+    });
+    form.append(input, saveBtn);
+    pop.appendChild(form);
+
+    if (active) {
+      const overwrite = el('button', 'iwb-btn');
+      overwrite.type = 'button';
+      overwrite.textContent = t('canvas.overwrite').replace('{name}', active.name);
+      overwrite.addEventListener('click', (event) => {
+        event.stopPropagation();
+        updateActiveCanvas();
+        closeCanvasMenu();
+      });
+      pop.appendChild(overwrite);
+    }
+
+    const list = el('div', 'iwb-canvas-list');
+    const canvases = syncCanvases();
+    if (!canvases.length) {
+      const empty = el('div', 'iwb-popover-note');
+      empty.textContent = t('canvas.none');
+      list.appendChild(empty);
+    }
+    for (const canvas of canvases) {
+      const row = el('div', 'iwb-canvas-row' + (canvas.id === state.activeCanvas ? ' current' : ''));
+      const pick = el('button', 'iwb-canvas-pick');
+      pick.type = 'button';
+      pick.innerHTML = '<span class="iwb-model-name"></span><span class="iwb-model-desc"></span>';
+      pick.querySelector('.iwb-model-name').textContent = canvas.name;
+      const cards = Array.isArray(canvas.layout?.cards)
+        ? canvas.layout.cards.length
+        : Number(canvas.layout?.cards) || 0;
+      pick.querySelector('.iwb-model-desc').textContent = t('canvas.meta')
+        .replace('{n}', String(cards))
+        .replace('{time}', canvas.savedAt ? canvasStamp(canvas.savedAt) : '');
+      pick.addEventListener('click', (event) => {
+        event.stopPropagation();
+        switchCanvas(canvas.id);
+      });
+      const remove = el('button', 'iwb-canvas-remove');
+      remove.type = 'button';
+      remove.title = t('canvas.delete');
+      remove.setAttribute('aria-label', t('canvas.delete'));
+      remove.textContent = '×';
+      remove.addEventListener('click', (event) => {
+        event.stopPropagation();
+        deleteCanvas(canvas.id);
+        closeCanvasMenu();
+      });
+      row.append(pick, remove);
+      list.appendChild(row);
+    }
+    pop.appendChild(list);
+
+    const rect = btnCanvas.getBoundingClientRect();
+    pop.style.left = Math.round(Math.max(8, Math.min(rect.left - 80, window.innerWidth - 300))) + 'px';
+    pop.style.top = Math.round(rect.bottom + 6) + 'px';
+    document.body.appendChild(pop);
+    canvasPop = pop;
+    const measured = pop.getBoundingClientRect();
+    if (measured.bottom > window.innerHeight - 8) {
+      pop.style.top = Math.max(8, Math.round(rect.top - measured.height - 6)) + 'px';
+    }
+    input.focus();
+    input.select();
+  }
+
   // ── kanban grouping (C4) ─────────────────────────────────────────────
   let kanbanPop = null;
   let kanbanTimer = 0;
@@ -1161,6 +1416,51 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
       if (item.k === 'assistant' && item.text && item.text.trim()) return item.text.trim();
     }
     return '';
+  }
+
+  let morePop = null;
+
+  function closeMoreMenu() {
+    morePop?.remove();
+    morePop = null;
+  }
+
+  /** Secondary header actions live in a ⋯ menu so the row never overflows. */
+  function openMoreMenu(card, anchor) {
+    if (morePop) {
+      closeMoreMenu();
+      return;
+    }
+    const pop = el('div', 'iwb-popover iwb-more');
+    pop.setAttribute('role', 'dialog');
+    pop.setAttribute('aria-label', t('card.more'));
+    const rows = [
+      { act: 'pin', label: card.pinned ? t('card.unpin') : t('card.pin'), icon: 'pin' },
+      { act: 'copy', label: t('card.copy'), icon: 'copy' },
+      { act: 'open', label: t('openNative'), icon: 'open' },
+    ];
+    if (card.stackId) rows.push({ act: 'detach', label: t('detach'), icon: 'layers' });
+    for (const row of rows) {
+      const button = el('button', 'iwb-model-row');
+      button.type = 'button';
+      button.innerHTML = '<span class="iwb-more-ico">' + icon(row.icon, 13) + '</span><span class="iwb-model-main"><span class="iwb-model-name"></span></span>';
+      button.querySelector('.iwb-model-name').textContent = row.label;
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        closeMoreMenu();
+        card.el.querySelector('.iwb-acts-more [data-act="' + row.act + '"]')?.click();
+      });
+      pop.appendChild(button);
+    }
+    const rect = anchor.getBoundingClientRect();
+    pop.style.left = Math.round(Math.max(8, Math.min(rect.left - 120, window.innerWidth - 200))) + 'px';
+    pop.style.top = Math.round(rect.bottom + 6) + 'px';
+    document.body.appendChild(pop);
+    morePop = pop;
+    const measured = pop.getBoundingClientRect();
+    if (measured.bottom > window.innerHeight - 8) {
+      pop.style.top = Math.max(8, Math.round(rect.top - measured.height - 6)) + 'px';
+    }
   }
 
   async function deliverPipeline(card) {
@@ -1868,6 +2168,10 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
       card.hovered = false;
     });
 
+    node.querySelector('[data-act="more"]')?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      openMoreMenu(card, event.currentTarget);
+    });
     node.querySelector('[data-act="pipe"]')?.addEventListener('click', (event) => {
       event.stopPropagation();
       openPipeMenu(card, event.currentTarget);
@@ -2102,6 +2406,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     if (!saved || !Array.isArray(saved.cards)) {
       syncApprovalSessions();
       void syncFromRemote().then(() => startRemoteSync());
+      void loadCanvases();
       return false;
     }
     localUpdatedAt = Number(saved.updatedAt) || 0;
@@ -2157,6 +2462,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     clearTimeout(saveTimer);
     saveTimer = 0;
     void syncFromRemote().then(() => startRemoteSync());
+    void loadCanvases();
     return true;
   }
 
@@ -2429,6 +2735,18 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
   });
 
 
+  btnCanvas.addEventListener('click', (event) => {
+    event.stopPropagation();
+    openCanvasMenu();
+  });
+
+  const onCanvasPointerDown = (event) => {
+    if (!canvasPop) return;
+    if (event.target?.closest?.('.iwb-canvas-menu') || event.target?.closest?.('.iwb-toolbar')) return;
+    closeCanvasMenu();
+  };
+  document.addEventListener('pointerdown', onCanvasPointerDown, true);
+
   btnBoard.addEventListener('click', (event) => {
     event.stopPropagation();
     openKanbanMenu();
@@ -2440,6 +2758,13 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     closeKanbanMenu();
   };
   document.addEventListener('pointerdown', onKanbanPointerDown, true);
+
+  const onMorePointerDown = (event) => {
+    if (!morePop) return;
+    if (event.target?.closest?.('.iwb-more') || event.target?.closest?.('[data-act="more"]')) return;
+    closeMoreMenu();
+  };
+  document.addEventListener('pointerdown', onMorePointerDown, true);
 
   const onPipePointerDown = (event) => {
     if (!pipePop) return;
@@ -2459,6 +2784,10 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     if (event.key === 'Escape') {
       clearSelection();
       closePipeMenu();
+      closeMoreMenu();
+      closeCanvasMenu();
+      document.removeEventListener('pointerdown', onMorePointerDown, true);
+      document.removeEventListener('pointerdown', onCanvasPointerDown, true);
       closeKanbanMenu();
     }
     if (event.key === '0') fitView();

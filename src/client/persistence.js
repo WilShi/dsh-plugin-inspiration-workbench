@@ -69,3 +69,30 @@ export function subscribeRemoteLayout(listener) {
     source.close();
   };
 }
+
+/** Named board snapshots, stored on the Host next to the working layout. */
+export async function fetchCanvases() {
+  try {
+    const response = await request('/canvases', { method: 'GET' });
+    const body = await response.json();
+    return {
+      canvases: Array.isArray(body?.canvases) ? body.canvases : [],
+      activeCanvas: typeof body?.activeCanvas === 'string' ? body.activeCanvas : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function pushCanvases(canvases, activeCanvas) {
+  try {
+    const response = await request('/canvases', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ canvases, activeCanvas }),
+    });
+    return await response.json().catch(() => ({}));
+  } catch {
+    return null;
+  }
+}

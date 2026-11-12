@@ -36,6 +36,9 @@ function createStore() {
   let updatedAt = 0;
   let rev = 0;
   let clientId = '';
+  /** Named board snapshots: [{ id, name, savedAt, layout }] */
+  let canvases = [];
+  let activeCanvas = null;
   const listeners = new Set();
   let saveTimer = null;
   let loading = null;
@@ -52,6 +55,8 @@ function createStore() {
             updatedAt = Number(parsed.updatedAt) || 0;
             rev = Number(parsed.rev) || 0;
           }
+          if (parsed && Array.isArray(parsed.canvases)) canvases = parsed.canvases;
+          if (parsed && typeof parsed.activeCanvas === 'string') activeCanvas = parsed.activeCanvas;
         } catch {
           /* first run, or the document is unreadable: start empty */
         }
@@ -64,6 +69,26 @@ function createStore() {
     return { layout, updatedAt, rev };
   }
 
+  /**
+   * Full canvases, layouts included: the client keeps them in memory so it can
+   * switch boards without another round-trip, and a reload must be able to
+   * restore any saved canvas, not just its name.
+   */
+  function canvasList() {
+    return canvases;
+  }
+
+  async function putCanvases(next, active) {
+    await ensureLoaded();
+    canvases = Array.isArray(next) ? next : [];
+    activeCanvas = typeof active === 'string' ? active : null;
+    updatedAt = Date.now();
+    rev += 1;
+    scheduleSave();
+    broadcast();
+    return { rev, updatedAt };
+  }
+
   function scheduleSave() {
     if (saveTimer) return;
     saveTimer = setTimeout(async () => {
@@ -72,7 +97,7 @@ function createStore() {
         await fs.mkdir(join(dataFilePath(), '..'), { recursive: true });
         await fs.writeFile(
           dataFilePath(),
-          JSON.stringify({ rev, updatedAt, layout }),
+          JSON.stringify({ rev, updatedAt, layout, canvases, activeCanvas }),
           'utf8'
         );
       } catch {
@@ -107,7 +132,10 @@ function createStore() {
   return {
     ensureLoaded,
     snapshot,
+    canvases: () => canvasList(),
+    active: () => activeCanvas,
     put,
+    putCanvases,
     subscribe(res) {
       listeners.add(res);
       return () => listeners.delete(res);
@@ -198,6 +226,38 @@ export function apply(ctx) {
                   return;
                 }
                 const result = await store.put(parsed.layout, parsed.clientId);
+                res.setHeader('content-type', 'application/json');
+                res.end(JSON.stringify(result));
+              })
+              .catch(() => res.writeHead(400).end('bad request'));
+            return;
+          }
+          res.writeHead(405, { allow: 'GET, PUT' }).end();
+          return;
+        }
+
+        if (route === '/canvases' || route === '/canvases/') {
+          if (req.method === 'GET') {
+            res.setHeader('content-type', 'application/json');
+            res.setHeader('cache-control', 'no-store');
+            store
+              .ensureLoaded()
+              .then(() => store.snapshot())
+              .then(() => {
+                res.end(JSON.stringify({ canvases: store.canvases(), activeCanvas: store.active() }));
+              })
+              .catch(() => res.writeHead(500).end());
+            return;
+          }
+          if (req.method === 'PUT' || req.method === 'POST') {
+            readBody(req, MAX_BODY_BYTES)
+              .then(async (text) => {
+                const parsed = JSON.parse(text);
+                if (!parsed || !Array.isArray(parsed.canvases)) {
+                  res.writeHead(400).end('bad canvases');
+                  return;
+                }
+                const result = await store.putCanvases(parsed.canvases, parsed.activeCanvas);
                 res.setHeader('content-type', 'application/json');
                 res.end(JSON.stringify(result));
               })

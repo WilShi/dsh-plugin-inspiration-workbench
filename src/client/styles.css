@@ -122,7 +122,7 @@
 }
 .iwb-meta {
   font-size: 10.5px; color: var(--dsw-alias-label-tertiary); border: .5px solid var(--dsw-alias-border-l2);
-  border-radius: 5px; padding: 0 4px; line-height: 15px; flex: 0 0 auto; max-width: 130px;
+  border-radius: 5px; padding: 0 4px; line-height: 15px; flex: 0 1 auto; max-width: 96px; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   background: none; font-family: inherit; cursor: pointer;
   transition: background .12s, border-color .12s, color .12s;
@@ -202,10 +202,17 @@
   font-size: 10px; line-height: 15px; padding: 0 4px; flex: 0 0 auto; color: var(--dsw-alias-label-secondary);
   background: var(--dsw-alias-bg-layer-2); border: .5px solid var(--dsw-alias-border-l2); border-radius: 5px;
 }
-.iwb-actions { display: flex; gap: 1px; flex: 0 0 auto; opacity: 0; transition: opacity .12s; }
-.iwb-card:hover .iwb-actions { opacity: 1; }
+.iwb-actions { display: flex; gap: 0; flex: 0 0 auto; opacity: .62; transition: opacity .12s; }
+.iwb-card:hover .iwb-actions,
+.iwb-card:focus-within .iwb-actions,
+.iwb-card.iwb-focus .iwb-actions { opacity: 1; }
+.iwb-acts-more { display: none; }
+.iwb-act-more { opacity: .9; }
+.iwb-more { min-width: 190px; }
+.iwb-more .iwb-model-row { gap: 8px; }
+.iwb-more-ico { display: inline-flex; color: var(--dsw-alias-label-tertiary); }
 .iwb-actions button {
-  width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center;
+  width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center;
   color: var(--dsw-alias-label-tertiary); background: none; border: 0; cursor: pointer;
 }
 .iwb-actions button:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
@@ -403,6 +410,33 @@
   color: var(--dsw-alias-label-primary);
   background: color-mix(in srgb, var(--dsw-alias-label-deep-diving) 14%, transparent);
 }
+
+/* ── canvas menu ──────────────────────────────────────────────────── */
+.iwb-toolbar .iwb-btn > span { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.iwb-canvas-menu { min-width: 260px; max-width: 320px; }
+.iwb-canvas-form { display: flex; gap: 6px; padding: 4px 2px 8px; }
+.iwb-canvas-input {
+  flex: 1; min-width: 0; height: 26px; padding: 0 8px; box-sizing: border-box;
+  border-radius: 6px; border: .5px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary);
+  font-family: inherit; font-size: 12px; outline: none;
+}
+.iwb-canvas-input:focus { border-color: var(--dsw-alias-label-deep-diving); }
+.iwb-canvas-list { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; max-height: 260px; overflow-y: auto; }
+.iwb-canvas-row { display: flex; align-items: center; gap: 2px; border-radius: 7px; }
+.iwb-canvas-row.current { background: var(--dsw-alias-interactive-bg-hover); }
+.iwb-canvas-pick {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  padding: 5px 7px; border: 0; border-radius: 7px; background: none; cursor: pointer; text-align: left;
+  font-family: inherit;
+}
+.iwb-canvas-pick:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.iwb-canvas-pick .iwb-model-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.iwb-canvas-remove {
+  flex: 0 0 auto; width: 22px; height: 22px; border: 0; border-radius: 6px;
+  background: none; color: var(--dsw-alias-label-tertiary); cursor: pointer; font-size: 14px; line-height: 1;
+}
+.iwb-canvas-remove:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-state-error-primary); }
 
 /* ── approval card note ───────────────────────────────────────────── */
 .iwb-approval-note {

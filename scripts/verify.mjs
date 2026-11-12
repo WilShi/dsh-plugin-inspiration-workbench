@@ -495,6 +495,51 @@ try {
   });
   record('quote picker opens from a message', quoteOpen.skipped || quoteOpen.open, quoteOpen.skipped ? 'needs a transcript card' : '', quoteOpen.skipped);
 
+  // ── header discoverability + named canvases ───────────────────────────
+  const header = await page.evaluate(() => {
+    const card = document.querySelector('.iwb-card');
+    if (!card) return { skipped: true };
+    const actions = card.querySelector('.iwb-actions');
+    const buttons = [...card.querySelectorAll('.iwb-actions > button')];
+    return {
+      skipped: false,
+      opacity: Number(getComputedStyle(actions).opacity),
+      visible: buttons.filter((b) => b.getBoundingClientRect().width > 0).length,
+      overflow: card.querySelector('.iwb-head').scrollWidth - card.querySelector('.iwb-head').clientWidth,
+    };
+  });
+  record('header actions are visible without hovering', header.skipped || (header.opacity > 0.3 && header.visible >= 2), header.skipped ? 'no card' : `opacity ${header.opacity}, ${header.visible} buttons`, header.skipped);
+  record('header row does not overflow', header.skipped || header.overflow <= 1, header.skipped ? 'no card' : 'overflow ' + header.overflow, header.skipped);
+
+  const canvas = await page.evaluate(async () => {
+    const button = [...document.querySelectorAll('.iwb-toolbar .iwb-btn')].find((node) => node.textContent.trim().startsWith('画布'));
+    if (!button) return { skipped: true };
+    button.click();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const input = document.querySelector('.iwb-canvas-input');
+    if (!input) return { skipped: true };
+    input.value = 'verify-canvas';
+    const save = document.querySelector('.iwb-canvas-form .iwb-btn');
+    save?.click();
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    const res = await fetch('/api/inspiration-workbench/canvases', { credentials: 'same-origin' });
+    const body = await res.json().catch(() => ({}));
+    const names = (body.canvases || []).map((c) => c.name);
+    // clean up the probe canvas (GET returns full canvases, so the round-trip
+    // keeps every saved layout intact)
+    await fetch('/api/inspiration-workbench/canvases', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        canvases: (body.canvases || []).filter((c) => c.name !== 'verify-canvas'),
+        activeCanvas: body.activeCanvas === undefined ? null : body.activeCanvas,
+      }),
+    });
+    return { skipped: false, names };
+  });
+  record('named canvases save to the Host', canvas.skipped || canvas.names.includes('verify-canvas'), canvas.skipped ? 'no canvas button' : canvas.names.join(', '), canvas.skipped);
+
   record('no page errors', pageErrors.length === 0, pageErrors.slice(0, 3).join(' / '));
 } catch (error) {
   record('run completed', false, String(error).slice(0, 200));
