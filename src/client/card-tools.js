@@ -353,6 +353,7 @@ export function createCardTools(deps) {
     toggleSearch,
     runSearch,
     stepSearch,
+    highlight,
     closeOutline,
     openOutline,
     closeRefPicker,

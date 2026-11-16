@@ -96,3 +96,34 @@ export async function pushCanvases(canvases, activeCanvas) {
     return null;
   }
 }
+
+/** Task state and transition history, bounded by the Host on every write. */
+export async function fetchTaskState() {
+  try {
+    const response = await request('/tasks', { method: 'GET' });
+    const body = await response.json();
+    if (!body || !Array.isArray(body.tasks) || !Array.isArray(body.flowEvents)) return null;
+    return {
+      rev: Number(body.rev) || 0,
+      updatedAt: Number(body.updatedAt) || 0,
+      tasks: body.tasks,
+      flowEvents: body.flowEvents,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function pushTaskState(tasks, flowEvents, clientId) {
+  try {
+    const response = await request('/tasks', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tasks, flowEvents, clientId }),
+    });
+    const body = await response.json().catch(() => ({}));
+    return { rev: Number(body?.rev) || 0, updatedAt: Number(body?.updatedAt) || 0 };
+  } catch {
+    return null;
+  }
+}

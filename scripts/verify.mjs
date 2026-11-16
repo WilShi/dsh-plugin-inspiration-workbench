@@ -73,6 +73,13 @@ try {
   await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
   await page.waitForTimeout(2500);
 
+  // A fresh profile may show model onboarding before the workbench is reachable.
+  const skipOnboarding = page.getByRole('button', { name: '稍后配置' });
+  if (await skipOnboarding.count()) {
+    await skipOnboarding.first().click().catch(() => {});
+    await page.waitForTimeout(600);
+  }
+
   // The app may greet with a resume button after an interrupted run.
   const resume = page.getByRole('button', { name: '继续' });
   if (await resume.count()) {
@@ -114,6 +121,7 @@ try {
     await page.waitForTimeout(800);
   }
 
+  await page.locator('.iwb-note-toggle-button').filter({ hasText: '源码' }).first().click();
   const noteCheck = await page.evaluate(() => {
     const area = document.querySelector('.iwb-note-input');
     if (!area) return { skipped: true };
@@ -145,12 +153,7 @@ try {
       await page.waitForTimeout(400);
       const actions = page.locator('.iwb-row-action');
       const actionCount = await actions.count();
-      for (let index = 0; index < actionCount; index += 1) {
-        if (await actions.nth(index).isVisible()) {
-          await actions.nth(index).click({ force: true });
-          break;
-        }
-      }
+      if (actionCount > 0) await actions.first().evaluate((node) => node.click());
       await page.waitForTimeout(5000);
     }
   }
@@ -197,7 +200,8 @@ try {
       const input = card.querySelector('.iwb-search-input');
       if (!input) return { error: 'no search input' };
       input.focus();
-      input.value = '的';
+      const sourceText = card.querySelector('.iwb-msg.assistant')?.textContent || card.textContent;
+      input.value = sourceText.trim().replace(/\s+/g, '').slice(0, 2) || '测试';
       input.dispatchEvent(new Event('input', { bubbles: true }));
       await new Promise((resolve) => setTimeout(resolve, 400));
       return {
@@ -400,9 +404,17 @@ try {
   record('quote lands in the target composer', quote.skipped || quote.quoted, quote.skipped ? quote.reason : '', quote.skipped);
 
   // ── pipeline edges (C7) ──────────────────────────────────────────────
+  const sessionCardCount = await page.locator('.iwb-card:has(.iwb-port)').count();
+  if (sessionCardCount < 2) {
+    const sessionRows = page.locator('[data-row-key^="session:"]');
+    await page.locator('.iwb-toolbar .iwb-btn.primary').filter({ hasText: '新建会话卡' }).click();
+    await page.waitForSelector('.iwb-workspace-row', { timeout: 12000 });
+    await page.locator('.iwb-workspace-row').first().click();
+    await page.waitForTimeout(5000);
+  }
   const pipeline = await page.evaluate(async () => {
     const cards = [...document.querySelectorAll('.iwb-card')].filter((card) => card.querySelector('.iwb-port'));
-    if (cards.length < 2) return { skipped: true, reason: 'needs 2 session cards' };
+    if (cards.length < 2) return { skipped: true, reason: 'needs 2 session cards, got ' + cards.length + ' / ' + document.querySelectorAll('.iwb-card').length + ' total' };
     const port = cards[0].querySelector('.iwb-port');
     const target = cards[1];
     const pr = port.getBoundingClientRect();
@@ -503,7 +515,12 @@ try {
 
   // ── leave the workbench and come back (unmount safety) ────────────────
   const beforeLeave = pageErrors.length;
-  await page.getByRole('button', { name: '插件' }).first().click().catch(() => {});
+  const newSessionButton = page.getByText('新会话').first();
+  if (await newSessionButton.count()) {
+    await newSessionButton.click().catch(() => {});
+  } else {
+    await page.getByRole('button', { name: '插件' }).first().click().catch(() => {});
+  }
   await page.waitForTimeout(1200);
   const left = await page.evaluate(() => ({
     blank: document.body.innerText.trim().length < 20,

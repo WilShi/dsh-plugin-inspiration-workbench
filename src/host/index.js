@@ -31,7 +31,7 @@ function dataFilePath() {
   return join(home, 'inspiration-workbench-layout.json');
 }
 
-function createStore() {
+export function createStore(filePath = dataFilePath()) {
   let layout = null;
   let updatedAt = 0;
   let rev = 0;
@@ -39,6 +39,8 @@ function createStore() {
   /** Named board snapshots: [{ id, name, savedAt, layout }] */
   let canvases = [];
   let activeCanvas = null;
+  let tasks = [];
+  let flowEvents = [];
   const listeners = new Set();
   let saveTimer = null;
   let loading = null;
@@ -48,15 +50,17 @@ function createStore() {
     if (!loading) {
       loading = (async () => {
         try {
-          const text = await fs.readFile(dataFilePath(), 'utf8');
+          const text = await fs.readFile(filePath, 'utf8');
           const parsed = JSON.parse(text);
-          if (parsed && typeof parsed === 'object' && parsed.layout) {
-            layout = parsed.layout;
+          if (parsed && typeof parsed === 'object' && parsed.layout) layout = parsed.layout;
+          if (parsed && typeof parsed === 'object') {
             updatedAt = Number(parsed.updatedAt) || 0;
             rev = Number(parsed.rev) || 0;
           }
           if (parsed && Array.isArray(parsed.canvases)) canvases = parsed.canvases;
           if (parsed && typeof parsed.activeCanvas === 'string') activeCanvas = parsed.activeCanvas;
+          if (parsed && Array.isArray(parsed.tasks)) tasks = parsed.tasks.slice(-200);
+          if (parsed && Array.isArray(parsed.flowEvents)) flowEvents = parsed.flowEvents.slice(-500);
         } catch {
           /* first run, or the document is unreadable: start empty */
         }
@@ -89,15 +93,31 @@ function createStore() {
     return { rev, updatedAt };
   }
 
+  function taskState() {
+    return { tasks, flowEvents };
+  }
+
+  async function putTasks(nextTasks, nextFlowEvents, sourceClientId) {
+    await ensureLoaded();
+    tasks = Array.isArray(nextTasks) ? nextTasks.slice(-200) : [];
+    flowEvents = Array.isArray(nextFlowEvents) ? nextFlowEvents.slice(-500) : [];
+    clientId = typeof sourceClientId === 'string' ? sourceClientId : '';
+    updatedAt = Date.now();
+    rev += 1;
+    scheduleSave();
+    broadcast();
+    return { rev, updatedAt };
+  }
+
   function scheduleSave() {
     if (saveTimer) return;
     saveTimer = setTimeout(async () => {
       saveTimer = null;
       try {
-        await fs.mkdir(join(dataFilePath(), '..'), { recursive: true });
+        await fs.mkdir(join(filePath, '..'), { recursive: true });
         await fs.writeFile(
-          dataFilePath(),
-          JSON.stringify({ rev, updatedAt, layout, canvases, activeCanvas }),
+          filePath,
+          JSON.stringify({ rev, updatedAt, layout, canvases, activeCanvas, tasks, flowEvents }),
           'utf8'
         );
       } catch {
@@ -136,6 +156,8 @@ function createStore() {
     active: () => activeCanvas,
     put,
     putCanvases,
+    taskState,
+    putTasks,
     subscribe(res) {
       listeners.add(res);
       return () => listeners.delete(res);
@@ -258,6 +280,46 @@ export function apply(ctx) {
                   return;
                 }
                 const result = await store.putCanvases(parsed.canvases, parsed.activeCanvas);
+                res.setHeader('content-type', 'application/json');
+                res.end(JSON.stringify(result));
+              })
+              .catch(() => res.writeHead(400).end('bad request'));
+            return;
+          }
+          res.writeHead(405, { allow: 'GET, PUT' }).end();
+          return;
+        }
+
+        if (route === '/tasks' || route === '/tasks/') {
+          if (req.method === 'GET') {
+            res.setHeader('content-type', 'application/json');
+            res.setHeader('cache-control', 'no-store');
+            store
+              .ensureLoaded()
+              .then(() => {
+                const current = store.snapshot();
+                const state = store.taskState();
+                res.end(
+                  JSON.stringify({
+                    rev: current.rev,
+                    updatedAt: current.updatedAt,
+                    tasks: state.tasks,
+                    flowEvents: state.flowEvents,
+                  })
+                );
+              })
+              .catch(() => res.writeHead(500).end());
+            return;
+          }
+          if (req.method === 'PUT' || req.method === 'POST') {
+            readBody(req, MAX_BODY_BYTES)
+              .then(async (text) => {
+                const parsed = JSON.parse(text);
+                if (!parsed || !Array.isArray(parsed.tasks) || !Array.isArray(parsed.flowEvents)) {
+                  res.writeHead(400).end('bad tasks');
+                  return;
+                }
+                const result = await store.putTasks(parsed.tasks, parsed.flowEvents, parsed.clientId);
                 res.setHeader('content-type', 'application/json');
                 res.end(JSON.stringify(result));
               })

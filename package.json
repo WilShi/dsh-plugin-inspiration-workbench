@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-inspiration-workbench",
-  "version": "0.10.0",
+  "version": "0.13.2",
   "private": false,
   "type": "module",
   "description": "Open many DeepSeek Harness sessions side by side as draggable, stackable cards on a free canvas.",
@@ -46,7 +46,13 @@
   ],
   "scripts": {
     "build": "node scripts/build-client.mjs",
-    "verify": "node scripts/verify.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "verify": "node scripts/verify.mjs",
+    "verify:task": "node scripts/verify-task-mode.mjs",
+    "verify:ai": "node scripts/verify-ai-online.mjs",
+    "verify:pipeline": "node scripts/verify-session-pipeline.mjs",
+    "verify:files": "node scripts/verify-file-cards.mjs",
+    "verify:models": "node scripts/verify-model-nodes.mjs"
   },
   "dsh": {
     "bundle": {

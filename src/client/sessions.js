@@ -501,6 +501,21 @@ export function createSessionsAdapter(ctx) {
     }
   }
 
+  function retainCompatible(sessionId) {
+    if (typeof sessions?.retain === 'function') {
+      return sessions.retain(sessionId, { source: 'inspirationWorkbench' });
+    }
+    if (typeof sessions?.binding === 'function') {
+      const wrap = (binding) => ({ binding, ready: Promise.resolve(binding), release: () => {} });
+      const existing = sessions.binding(sessionId);
+      if (existing) return wrap(existing);
+      sessions.open?.(sessionId);
+      const opened = sessions.binding(sessionId);
+      if (opened) return wrap(opened);
+    }
+    throw new Error('当前 DSH 版本不支持会话绑定，无法读取这条会话');
+  }
+
   function open(sessionId, onChange) {
     if (!sessions) {
       onChange();
@@ -508,13 +523,7 @@ export function createSessionsAdapter(ctx) {
     }
     let entry = entries.get(sessionId);
     if (!entry) {
-      let reference;
-      try {
-        reference = sessions.retain(sessionId, { source: 'inspirationWorkbench' });
-      } catch {
-        // Older builds type `source` as a closed union; the tag is only bookkeeping.
-        reference = sessions.retain(sessionId, { source: 'gateway' });
-      }
+      let reference = retainCompatible(sessionId);
       entry = { reference, binding: null, listeners: new Set(), unsubs: [] };
       entries.set(sessionId, entry);
       if (reference.binding) attach(sessionId, entry);
@@ -746,7 +755,7 @@ export function createSessionsAdapter(ctx) {
 
   const remoteSession = () => {
     try {
-      return ctx.remote?.session || ctx.get?.('remote')?.session;
+      return ctx.get?.('remote')?.session;
     } catch {
       return undefined;
     }
@@ -757,6 +766,11 @@ export function createSessionsAdapter(ctx) {
   let catalogPromise = null;
 
   async function modelCatalog() {
+    if (!remoteSession()?.modelCatalog) {
+      catalogCache = { groups: [] };
+      catalogAt = Date.now();
+      return catalogCache;
+    }
     const stale = catalogCache && Date.now() - catalogAt > 60000;
     if (catalogCache && !stale) return catalogCache;
     if (stale) {
@@ -868,6 +882,10 @@ export function createSessionsAdapter(ctx) {
     }
   }
 
+  function modelSelection(sessionId) {
+    return selectionOf(sessionId);
+  }
+
   async function selectModel(sessionId, selection) {
     const remote = remoteSession();
     if (!remote?.selectModel) throw new Error('当前版本没有提供模型切换');
@@ -943,6 +961,21 @@ export function createSessionsAdapter(ctx) {
     return listWorkspaces().find((workspace) => workspace.sessionIds.includes(sessionId)) || null;
   }
 
+  async function createWorkspace({ path }) {
+    const service = workspacesService();
+    if (!service?.create) throw new Error('当前版本没有提供工作区创建接口');
+    const result = await service.create({ path });
+    const workspace = result?.value?.workspace || result?.workspace || result?.value || result;
+    const id = workspace?.workspaceId || workspace?.id;
+    if (!id) throw new Error('工作区创建失败，请检查路径是否有效');
+    return {
+      id: String(id),
+      title: workspace.title || path.split('/').filter(Boolean).pop() || path,
+      path: workspace.path || path,
+      sessionIds: workspace.sessionIds || [],
+    };
+  }
+
   async function createSession(options) {
     if (!sessions?.create) throw new Error('当前版本没有提供静默新建会话的接口');
     const request = {};
@@ -951,11 +984,46 @@ export function createSessionsAdapter(ctx) {
     return await sessions.create(request);
   }
 
+  async function waitForReady(sessionId, options) {
+    const timeoutMs = Number(options?.timeoutMs) || 15000;
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      if (bindingOf(sessionId)) return true;
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+    throw new Error('会话打开超时，请稍后重试');
+  }
+
+  function listRecentSessions(limit) {
+    try {
+      const rows = sessions?.list?.getSnapshot?.()?.byId || {};
+      const cap = Math.max(1, Math.min(100, Number(limit) || 30));
+      return Object.values(rows)
+        .map((row) => {
+          const sessionId = row.sessionId || row.id || row.key || '';
+          const activityAt = Number(row.lastActivityAt || row.activityAt || row.updatedAt || row.createdAt) || 0;
+          return {
+            sessionId: String(sessionId),
+            title: row.displayTitle || row.title || '未命名会话',
+            activityAt,
+            archived: Boolean(row.archived || row.archivedAt || row.deletedAt),
+            workspace: workspaceOf(String(sessionId))?.title || '',
+          };
+        })
+        .filter((row) => row.sessionId && !row.archived)
+        .sort((left, right) => right.activityAt - left.activityAt)
+        .slice(0, cap);
+    } catch {
+      return [];
+    }
+  }
+
   return {
     available: Boolean(sessions),
     hasModelPicker: () => Boolean(remoteSession()?.selectModel),
     modelCatalog,
     selectModel,
+    modelSelection,
     selectionOf,
     answerQuestion,
     open,
@@ -966,6 +1034,9 @@ export function createSessionsAdapter(ctx) {
     loadOlder,
     titleOf,
     createSession,
+    createWorkspace,
+    waitForReady,
+    listRecentSessions,
     listWorkspaces,
     workspaceOf,
     pollStates,

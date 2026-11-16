@@ -15,6 +15,12 @@ import { createMarkdown } from './markdown';
 import { createRenderers } from './render';
 import { createCardTools } from './card-tools';
 import { createModelMenu, createArrangeMenu, createSettingsMenu, createWorkspaceMenu } from './popovers';
+import { createFlowRecorder } from './flow-recorder';
+import { createTaskStore } from './task-store';
+import { createTaskController } from './task-controller.js';
+import { createTaskView } from './task-view.js';
+import { createFileStore } from './file-store.js';
+import { openFilePreview, fileKind, formatBytes } from './file-preview.js';
 
 const STORAGE_KEY = 'dsh.inspiration-workbench.v1';
 const CANVAS_KEY = 'dsh.inspiration-workbench.canvases.v1';
@@ -40,7 +46,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     stacks: [],
     seq: 0,
     stackSeq: 0,
-    settings: { inlineApprovals: false, chainWheel: true },
+    settings: { inlineApprovals: false, chainWheel: false },
     selected: new Set(),
     zTop: 20,
     focusedId: null,
@@ -48,7 +54,19 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     board: { active: false, key: 'status', saved: new Map() },
     canvases: [],
     activeCanvas: null,
+    mode: 'canvas',
   };
+
+  const taskStore = createTaskStore();
+  const fileStore = createFileStore();
+  const flow = createFlowRecorder({
+    onChange: (events) => taskStore.setFlowEvents(events),
+  });
+  const taskLoadPromise = taskStore.load().then((saved) => {
+    flow.replace(saved.flowEvents);
+    schedulePipelines();
+    return saved;
+  }).catch(() => null);
 
   // Turn expansion survives a remote layout apply (which rebuilds card DOM):
   // the state lives on the board keyed by session + turn, not on the card object.
@@ -60,6 +78,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     toggleSearch,
     runSearch,
     stepSearch,
+    highlight,
     closeOutline,
     openOutline,
     closeRefPicker,
@@ -123,6 +142,13 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
   btnNew.type = 'button';
   const btnCanvas = el('button', 'iwb-btn', icon('canvas', 13) + '<span>' + t('canvas') + '</span>');
   btnCanvas.type = 'button';
+  const btnBlank = el('button', 'iwb-btn iwb-btn-icon', icon('plus', 13));
+  btnBlank.type = 'button';
+  btnBlank.title = '新建空白画布（自动保存当前画布）';
+  btnBlank.setAttribute('aria-label', '新建空白画布');
+  const btnFile = el('button', 'iwb-btn', icon('clip', 13) + '<span>文件</span>');
+  btnFile.type = 'button';
+  btnFile.title = '添加图片或文件到画布';
   const btnArrange = el('button', 'iwb-btn', icon('arrange', 13) + '<span>' + t('arrange') + '</span>');
   btnArrange.type = 'button';
   const btnBoard = el('button', 'iwb-btn', icon('board', 13) + '<span>' + t('boardMode') + '</span>');
@@ -139,8 +165,32 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
   const btnSettings = el('button', 'iwb-btn', icon('sliders', 13) + '<span>' + t('settings') + '</span>');
   btnSettings.type = 'button';
   const actions = el('div', 'iwb-toolbar-actions');
-  actions.append(todoBar, btnNew, btnNote, btnCanvas, btnArrange, btnBoard, btnFit, btnCollapse, btnSettings);
-  toolbar.append(titles, hint, actions);
+  actions.append(todoBar, btnNew, btnNote, btnFile, btnCanvas, btnBlank, btnArrange, btnBoard, btnFit, btnCollapse, btnSettings);
+  const modeSwitch = el('div', 'iwb-mode-switch');
+  modeSwitch.setAttribute('role', 'tablist');
+  modeSwitch.setAttribute('aria-label', '工作视图');
+  const btnCanvasMode = el('button', 'iwb-mode-tab active', '<span>画布</span>');
+  btnCanvasMode.type = 'button';
+  btnCanvasMode.setAttribute('role', 'tab');
+  btnCanvasMode.setAttribute('aria-selected', 'true');
+  const btnTaskMode = el('button', 'iwb-mode-tab', '<span>任务</span>');
+  btnTaskMode.type = 'button';
+  btnTaskMode.setAttribute('role', 'tab');
+  btnTaskMode.setAttribute('aria-selected', 'false');
+  modeSwitch.append(btnCanvasMode, btnTaskMode);
+  toolbar.append(titles, modeSwitch, hint, actions);
+
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.multiple = true;
+  fileInput.hidden = true;
+  fileInput.accept = 'image/*,.pdf,.docx,.pptx,.txt,.md,.markdown,.json,.jsonl,.csv,.log,.html,.css,.js,.ts,.tsx,.jsx,.py,.java,.go,.rs,.sql,.sh,.yaml,.yml';
+  fileInput.addEventListener('change', async () => {
+    for (const file of [...fileInput.files]) await addFileCard(file);
+    fileInput.value = '';
+  });
+  document.body.appendChild(fileInput);
+  btnFile.addEventListener('click', () => fileInput.click());
 
   const canvas = el('div', 'iwb-canvas');
   canvas.tabIndex = 0;
@@ -529,26 +579,158 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
   function noteBody(card) {
     const body = card.el.querySelector('.iwb-body');
     body.textContent = '';
-    const wrap = el('div', 'iwb-note');
+    card.viewMode = card.viewMode || 'preview';
+
+    const toggle = el('div', 'iwb-note-toggle');
+    const previewButton = el('button', 'iwb-note-toggle-button', '预览');
+    previewButton.type = 'button';
+    previewButton.title = '查看 Markdown 渲染效果';
+    const sourceButton = el('button', 'iwb-note-toggle-button', '源码');
+    sourceButton.type = 'button';
+    sourceButton.title = '查看 Markdown 源码';
+    toggle.append(previewButton, sourceButton);
+    body.appendChild(toggle);
+
+    const preview = el('div', 'iwb-note-preview');
+    body.appendChild(preview);
     const area = document.createElement('textarea');
     area.className = 'iwb-note-input';
     area.value = card.note || '';
     area.placeholder = t('note.placeholder');
-    area.addEventListener('input', () => {
-      card.note = area.value;
+    body.appendChild(area);
+
+    const sync = () => {
+      preview.hidden = card.viewMode === 'source';
+      area.hidden = card.viewMode !== 'source';
+      previewButton.classList.toggle('active', card.viewMode === 'preview');
+      sourceButton.classList.toggle('active', card.viewMode === 'source');
+      previewButton.setAttribute('aria-pressed', String(card.viewMode === 'preview'));
+      sourceButton.setAttribute('aria-pressed', String(card.viewMode === 'source'));
+      if (card.viewMode === 'preview') {
+        preview.textContent = '';
+        appendMarkdownLite(preview, card.note || '');
+      }
+    };
+    previewButton.addEventListener('click', () => {
+      card.viewMode = 'preview';
+      sync();
       saveSoon();
     });
-    wrap.appendChild(area);
+    sourceButton.addEventListener('click', () => {
+      card.viewMode = 'source';
+      sync();
+      saveSoon();
+    });
+    area.addEventListener('input', () => {
+      card.note = area.value;
+      sync();
+      saveSoon();
+    });
+    sync();
+  }
+
+  function fileCardBody(card) {
+    const body = card.el.querySelector('.iwb-body');
+    body.textContent = '';
+    const wrap = el('div', 'iwb-file-body');
+    const kind = fileKind({ name: card.title, type: card.type });
+    if (kind === 'image') {
+      const image = el('img', 'iwb-file-thumb');
+      image.alt = card.title || '图片文件';
+      wrap.appendChild(image);
+      fileStore.get(card.fileId).then((record) => {
+        if (record?.blob) image.src = URL.createObjectURL(record.blob);
+      });
+    } else {
+      const iconNode = el('div', 'iwb-file-icon', fileKindIcon(kind));
+      wrap.appendChild(iconNode);
+    }
+    const name = el('div', 'iwb-file-name');
+    name.textContent = card.title || '未命名文件';
+    const meta = el('div', 'iwb-file-meta');
+    meta.textContent = (card.type || kind.toUpperCase()) + ' · ' + formatBytes(card.size);
+    const open = el('button', 'iwb-btn primary iwb-file-open', icon('eye', 13) + '<span>预览</span>');
+    open.type = 'button';
+    open.addEventListener('click', (event) => {
+      event.stopPropagation();
+      void openStoredFile(card);
+    });
+    wrap.append(name, meta, open);
     body.appendChild(wrap);
   }
 
-  function addNote({ id, note, title, x, y, w, h, focus }) {
+  function fileKindIcon(kind) {
+    return ({ image: 'IMG', pdf: 'PDF', docx: 'DOC', pptx: 'PPT', html: 'HTML', text: 'TXT', other: 'FILE' })[kind] || 'FILE';
+  }
+
+  async function openStoredFile(card) {
+    const record = await fileStore.get(card.fileId);
+    if (!record) {
+      toast('文件内容不可用，请重新添加');
+      return;
+    }
+    openFilePreview({ ...record, name: card.title, type: card.type, size: card.size });
+  }
+
+  async function addFileCard(fileOrMeta) {
+    const fileId = fileOrMeta.fileId || await fileStore.put(fileOrMeta);
+    const kind = fileKind(fileOrMeta);
+    const card = {
+      id: 'f' + ++state.seq,
+      kind: 'file',
+      fileId,
+      title: fileOrMeta.name || fileOrMeta.title || '未命名文件',
+      type: fileOrMeta.type || kind,
+      size: Number(fileOrMeta.size) || 0,
+      x: typeof fileOrMeta.x === 'number' ? fileOrMeta.x : nextSlot().x,
+      y: typeof fileOrMeta.y === 'number' ? fileOrMeta.y : nextSlot().y,
+      w: fileOrMeta.w || DEFAULT_W,
+      h: fileOrMeta.h || DEFAULT_H,
+      stackId: null,
+      running: false,
+      composerDraft: '',
+      pipeline: null,
+    };
+    const node = el('article', 'iwb-card iwb-file-card', cardMarkup(card));
+    node.tabIndex = -1;
+    node.setAttribute('role', 'listitem');
+    node.style.left = card.x + 'px';
+    node.style.top = card.y + 'px';
+    node.style.width = card.w + 'px';
+    node.style.height = card.h + 'px';
+    card.el = node;
+    world.appendChild(node);
+    node.querySelector('.iwb-card-title').textContent = card.title;
+    for (const selector of ['.iwb-meta', '.iwb-elapsed', '.iwb-foot', '.iwb-pipe-badge', '[data-act="search"]', '[data-act="outline"]', '[data-act="pipe"]']) {
+      node.querySelector(selector)?.remove();
+    }
+    const previewButton = el('button', 'iwb-file-preview-button', icon('eye', 13));
+    previewButton.type = 'button';
+    previewButton.title = '预览文件';
+    previewButton.setAttribute('aria-label', '预览文件');
+    previewButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      void openStoredFile(card);
+    });
+    node.querySelector('.iwb-actions').insertBefore(previewButton, node.querySelector('[data-act="close"]'));
+    bindCard(card);
+    fileCardBody(card);
+    state.cards.push(card);
+    updateCounts();
+    updateEmptyState();
+    saveSoon();
+    if (fileOrMeta.focus !== false) centerCard(card);
+    return card;
+  }
+
+  function addNote({ id, note, title, x, y, w, h, focus, viewMode }) {
     if (disposed) return null;
     const slot = nextSlot();
     const card = {
       id: id || 'n' + ++state.seq,
       kind: 'note',
       note: note || '',
+      viewMode: viewMode || 'preview',
       title: title || t('note.title'),
       x: typeof x === 'number' ? x : slot.x,
       y: typeof y === 'number' ? y : slot.y,
@@ -586,7 +768,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     return card;
   }
 
-  function addSession({ sessionId, title, workspace, x, y, w, h, focus, pipeline }) {
+  function addSession({ sessionId, title, workspace, x, y, w, h, focus, pipeline, composerDraft }) {
     if (disposed) return null;
     const existing = state.cards.find((card) => card.sessionId === sessionId);
     if (existing) {
@@ -606,9 +788,10 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
       w: w || DEFAULT_W,
       h: h || DEFAULT_H,
       stackId: null,
+      kind: 'session',
       running: false,
       startedAt: 0,
-      composerDraft: '',
+      composerDraft: composerDraft || '',
       toolOpen: new Map(),
       view: null,
       pipeline: pipeline || null,
@@ -969,6 +1152,28 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
 
   // ── named canvases ───────────────────────────────────────────────────
   let canvasPop = null;
+  let taskView = null;
+  let taskController = null;
+  let canvasSaveTimer = 0;
+  let switchingCanvas = false;
+
+  function syncActiveCanvas() {
+    clearTimeout(canvasSaveTimer);
+    canvasSaveTimer = 0;
+    if (switchingCanvas || !state.activeCanvas) return false;
+    const active = syncCanvases().find((canvas) => canvas.id === state.activeCanvas);
+    if (!active) return false;
+    active.layout = layoutPayload();
+    active.savedAt = Date.now();
+    storeCanvases();
+    return true;
+  }
+
+  function scheduleActiveCanvasSave() {
+    if (switchingCanvas || !state.activeCanvas) return;
+    clearTimeout(canvasSaveTimer);
+    canvasSaveTimer = setTimeout(syncActiveCanvas, 450);
+  }
 
   function closeCanvasMenu() {
     canvasPop?.remove();
@@ -1010,6 +1215,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     btnCanvas.querySelector('span').textContent = active ? t('canvas') + ' · ' + active.name : t('canvas');
     btnCanvas.title = active ? t('canvas.active').replace('{name}', active.name) : t('canvas.title');
     btnCanvas.classList.toggle('iwb-btn-active', Boolean(active));
+    if (state.mode === 'task') taskView?.refresh();
   }
 
   /** Only canvases that actually carry a board are switchable. */
@@ -1080,15 +1286,9 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
 
   function switchCanvas(id) {
     const target = syncCanvases().find((canvas) => canvas.id === id);
-    if (!target) return;
-    // Keep unsaved work: fold the current board back into its canvas first.
-    if (state.activeCanvas && state.activeCanvas !== id) {
-      const current = syncCanvases().find((canvas) => canvas.id === state.activeCanvas);
-      if (current) {
-        current.layout = layoutPayload();
-        current.savedAt = Date.now();
-      }
-    }
+    if (!target || switchingCanvas) return;
+    if (state.activeCanvas && state.activeCanvas !== id) syncActiveCanvas();
+    switchingCanvas = true;
     state.activeCanvas = id;
     storeCanvases();
     closeCanvasMenu();
@@ -1098,7 +1298,88 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
       void fitView();
     } catch {
       toast(t('canvas.broken'));
+    } finally {
+      switchingCanvas = false;
     }
+  }
+
+  function createBlankCanvas() {
+    if (state.activeCanvas) syncActiveCanvas();
+    switchingCanvas = true;
+    try {
+      state.activeCanvas = null;
+      reset();
+      state.zoom = 1;
+      state.pan = { x: 24, y: 24 };
+      applyView();
+      storeCanvases();
+      save();
+      toast('已新建空白画布，原画布仍保留在画布列表中');
+    } finally {
+      switchingCanvas = false;
+    }
+  }
+
+  function confirmUnsavedCanvas() {
+    return new Promise((resolve) => {
+      const dialog = document.createElement('dialog');
+      dialog.className = 'iwb-confirm-dialog';
+      dialog.setAttribute('aria-labelledby', 'iwb-unsaved-title');
+      dialog.innerHTML = `
+        <form method="dialog" class="iwb-confirm-form">
+          <h2 id="iwb-unsaved-title">保存当前画布？</h2>
+          <p>当前画布还没有命名。继续后会清空当前视图，但不会停止或删除任何 DSH 会话。</p>
+          <label>画布名称<input name="canvasName" maxlength="60" value="未命名画布" autocomplete="off"></label>
+          <div class="iwb-confirm-actions">
+            <button type="button" data-choice="cancel">取消</button>
+            <button type="button" data-choice="discard">不保存，继续</button>
+            <button type="button" class="primary" data-choice="save">保存并继续</button>
+          </div>
+        </form>`;
+      document.body.appendChild(dialog);
+      const finish = (choice) => {
+        const name = dialog.querySelector('input').value.trim();
+        if (choice === 'save' && !name) {
+          dialog.querySelector('input').focus();
+          return;
+        }
+        dialog.remove();
+        resolve({ choice, name });
+      };
+      dialog.querySelector('[data-choice="cancel"]').addEventListener('click', () => finish('cancel'));
+      dialog.querySelector('[data-choice="discard"]').addEventListener('click', () => finish('discard'));
+      dialog.querySelector('[data-choice="save"]').addEventListener('click', () => finish('save'));
+      dialog.addEventListener('cancel', (event) => {
+        event.preventDefault();
+        finish('cancel');
+      });
+      dialog.showModal();
+      const input = dialog.querySelector('input');
+      input.focus();
+      input.select();
+    });
+  }
+
+  async function requestNewBlankCanvas() {
+    if (state.activeCanvas || !state.cards.length) {
+      createBlankCanvas();
+      return true;
+    }
+    const result = await confirmUnsavedCanvas();
+    if (result.choice === 'cancel') return false;
+    if (result.choice === 'save' && !saveCanvasAs(result.name)) return false;
+    createBlankCanvas();
+    return true;
+  }
+
+  async function requestSwitchCanvas(id) {
+    if (!state.activeCanvas && state.cards.length) {
+      const result = await confirmUnsavedCanvas();
+      if (result.choice === 'cancel') return false;
+      if (result.choice === 'save' && !saveCanvasAs(result.name)) return false;
+    }
+    switchCanvas(id);
+    return true;
   }
 
   function deleteCanvas(id) {
@@ -1184,7 +1465,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
         .replace('{time}', canvas.savedAt ? canvasStamp(canvas.savedAt) : '');
       pick.addEventListener('click', (event) => {
         event.stopPropagation();
-        switchCanvas(canvas.id);
+        void requestSwitchCanvas(canvas.id);
       });
       const remove = el('button', 'iwb-canvas-remove');
       remove.type = 'button';
@@ -1444,14 +1725,32 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     return target?.id || '';
   }
 
+  function recordFlow(card, target, status, extra) {
+    const active = syncCanvases().find((canvas) => canvas.id === state.activeCanvas);
+    const event = flow.record({
+      sourceSessionId: card.sessionId,
+      targetId: target.id,
+      targetKind: target.kind === 'note' ? 'note' : 'session',
+      canvasId: state.activeCanvas || '',
+      taskId: active?.taskId || '',
+      status,
+      mode: target.mode === 'draft' ? 'draft' : 'send',
+      ...extra,
+    });
+    schedulePipelines();
+    return event;
+  }
+
   function addPipeTarget(card, targetCard, fromSide) {
     const kind = targetCard.kind === 'note' ? 'note' : 'session';
     const id = kind === 'note' ? targetCard.id : targetCard.sessionId;
     if (!id || targetCard === card) return false;
     const targets = pipeTargets(card).filter((target) => !(target.kind === kind && target.id === id));
     const expanded = targets.length !== pipeTargets(card).length;
-    targets.push({ kind, id, mode: 'send', from: fromSide || 'right' });
+    const target = { kind, id, mode: 'send', from: fromSide || 'right' };
+    targets.push(target);
     setPipeTargets(card, targets);
+    if (!expanded) recordFlow(card, target, 'waiting', { message: '连线已创建，等待上游完成' });
     return !expanded;
   }
 
@@ -1519,7 +1818,17 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
         });
         const path = document.createElementNS(SVG_NS, 'path');
         path.setAttribute('d', d);
-        path.setAttribute('class', 'iwb-link' + (card.running ? ' iwb-link-active' : ''));
+        const edgeKey = card.sessionId + '=>' + (target.kind === 'note' ? 'note' : 'session') + ':' + target.id;
+        const latest = flow.latestByEdge().get(edgeKey);
+        const flowStatus = latest?.status || 'waiting';
+        path.setAttribute('class', 'iwb-link iwb-link-' + flowStatus + (card.running ? ' iwb-link-active' : ''));
+        path.setAttribute('data-flow-status', flowStatus);
+        path.setAttribute('data-edge-key', edgeKey);
+        if (latest?.message) {
+          const title = document.createElementNS(SVG_NS, 'title');
+          title.textContent = latest.message + (latest.at ? ' · ' + new Date(latest.at).toLocaleString() : '');
+          path.appendChild(title);
+        }
         if (target.mode === 'draft') path.setAttribute('stroke-dasharray', '4 4');
         const arrow = document.createElementNS(SVG_NS, 'path');
         arrow.setAttribute('d', arrowPath(edgeAnchor(targetCard, toSide), toSide));
@@ -1685,6 +1994,22 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     }
   }
 
+  function maybeDeliverCompleted(card) {
+    if (card.running || card.kind === 'note') return;
+    const text = lastAssistantText(card);
+    if (!text) return;
+    const fingerprint = text.slice(0, 160);
+    if (card.catchUpFingerprint === fingerprint) return;
+    const pending = pipeTargets(card).some((target) => (card.pipedFingerprints || {})[target.kind + ':' + target.id] !== fingerprint);
+    if (!pending) return;
+    card.catchUpFingerprint = fingerprint;
+    // A completed upstream can predate the edge or a page restore. Deliver it once
+    // instead of requiring a new running → idle transition.
+    setTimeout(() => {
+      if (!disposed && !card.running) void deliverPipeline(card);
+    }, 0);
+  }
+
   async function deliverPipeline(card) {
     const targets = pipeTargets(card);
     if (!targets.length) return;
@@ -1721,6 +2046,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
         area.dispatchEvent(new Event('input', { bubbles: true }));
         targetCard.pipeDepth = depth;
         card.pipedFingerprints[key] = fingerprint;
+        recordFlow(card, target, 'delivered', { fingerprint, message: '结果已写入便签' });
         ensureVisible(targetCard);
         toast(t(replace ? 'pipe.notedReplaced' : 'pipe.noted').replace('{name}', targetCard.title || t('untitled')));
         continue;
@@ -1734,16 +2060,20 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
         ensureVisible(targetCard);
         targetCard.pipeDepth = depth;
         card.pipedFingerprints[key] = fingerprint;
+        recordFlow(card, target, 'drafted', { fingerprint, message: '已生成草稿，等待用户发送' });
         toast(t('pipe.drafted').replace('{name}', pipeTargetLabel(target)));
         continue;
       }
 
       try {
+        recordFlow(card, target, 'delivering', { fingerprint, message: '正在投递到目标会话' });
         await adapter.prompt(target.id, text, 'queue');
         card.pipedFingerprints[key] = fingerprint;
         if (targetCard) targetCard.pipeDepth = depth;
+        recordFlow(card, target, 'delivered', { fingerprint, message: '已发送到目标会话' });
         toast(t('pipe.sent').replace('{name}', pipeTargetLabel(target)));
       } catch (error) {
+        recordFlow(card, target, 'failed', { fingerprint, message: error?.message || '投递失败' });
         toast(t('pipe.failed').replace('{error}', error?.message || ''));
       }
     }
@@ -1866,6 +2196,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     } catch {
       /* ignore */
     }
+    if (card.kind === 'file') void fileStore.remove(card.fileId);
     card.el.remove();
     try {
       card.detachApprovals?.();
@@ -1884,7 +2215,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
         renderPipeBadge(other);
       }
     }
-    schedulePipelines();
+    renderPipelines();
     if (state.selected.delete(card.id)) renderBatchBar();
     if (state.focusedId === card.id) {
       state.focusedId = null;
@@ -1923,7 +2254,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
   }
 
   function renderCard(card) {
-    if (card.kind === 'note') return;
+    if (card.kind === 'note' || card.kind === 'file') return;
     let view;
     try {
       view = adapter.read(card.sessionId);
@@ -2032,6 +2363,8 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
 
     renderBody(card, view);
     renderQueue(card, view);
+    if (!card.running) maybeDeliverCompleted(card);
+    taskController?.noteSessionRuntime(card);
     if (wasRunning !== card.running) {
       renderFoot(card);
       if (wasRunning && !card.running) void deliverPipeline(card);
@@ -2395,8 +2728,14 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
       switch (event.key) {
         case 'Enter':
           event.preventDefault();
-          if (card.kind === 'note') node.querySelector('.iwb-note-input')?.focus();
-          else node.querySelector('.iwb-foot textarea')?.focus();
+          if (card.kind === 'note') {
+            if (card.viewMode !== 'source') {
+              card.viewMode = 'source';
+              noteBody(card);
+              saveSoon();
+            }
+            node.querySelector('.iwb-note-input')?.focus();
+          } else node.querySelector('.iwb-foot textarea')?.focus();
           break;
         case 'Escape':
           event.preventDefault();
@@ -2649,6 +2988,12 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
   }
 
   function updateCounts() {
+    if (state.mode === 'task') {
+      const tasks = taskController?.snapshot().tasks || [];
+      const actionable = tasks.filter((task) => ['needs_input', 'blocked', 'review'].includes(task.status)).length;
+      countsNode.textContent = tasks.length + ' 项任务' + (actionable ? ' · ' + actionable + ' 项待处理' : '');
+      return;
+    }
     const running = state.cards.filter((c) => c.running).length;
     const parts = [t('count.cards').replace('{n}', String(state.cards.length))];
     if (running) parts.push(t('count.running').replace('{n}', String(running)));
@@ -2674,6 +3019,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
       const payload = layoutPayload();
       localUpdatedAt = payload.updatedAt;
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      scheduleActiveCanvasSave();
       if (!applyingRemote) {
         void pushRemoteLayout(payload, clientId).then((result) => {
           if (result?.rev) remoteRev = result.rev;
@@ -2684,7 +3030,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     }
   }
 
-  function restore() {
+  async function restore() {
     if (restoreDone) return;
     restoreDone = true;
     let saved = null;
@@ -2727,6 +3073,10 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
           note.pinned = true;
           note.el?.classList.add('iwb-pinned');
         }
+        continue;
+      }
+      if (card?.kind === 'file') {
+        await addFileCard({ ...card, focus: false });
         continue;
       }
       if (!card?.sessionId) continue;
@@ -2784,6 +3134,11 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
         workspace: card.workspace || '',
         kind: card.kind || 'session',
         note: card.note || '',
+        viewMode: card.viewMode || 'preview',
+        fileId: card.fileId || '',
+        type: card.type || '',
+        size: Number(card.size) || 0,
+        composerDraft: card.composerDraft || '',
         pinned: Boolean(card.pinned),
         pipeline: pipeTargets(card).length ? { targets: pipeTargets(card) } : null,
         x: card.x,
@@ -2815,7 +3170,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
   }
 
   /** Replace the whole board with a saved layout document. */
-  function applyLayout(saved, options) {
+  async function applyLayout(saved, options) {
     if (!saved || !Array.isArray(saved.cards)) throw new Error(t('settings.importInvalid'));
     reset();
     if (typeof saved.zoom === 'number') state.zoom = clamp(saved.zoom, 0.3, 1.6);
@@ -2828,6 +3183,8 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
           note.pinned = true;
           note.el?.classList.add('iwb-pinned');
         }
+      } else if (card?.kind === 'file') {
+        await addFileCard({ ...card, focus: false });
       } else if (card.sessionId) {
         addSession({ ...card });
       }
@@ -2929,6 +3286,9 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     });
     state.cards = [];
     state.stacks = [];
+    if (pipelineFrame) cancelAnimationFrame(pipelineFrame);
+    pipelineFrame = 0;
+    renderPipelines();
     try {
       window.localStorage.removeItem(STORAGE_KEY);
     } catch {
@@ -2953,6 +3313,23 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     if (!state.cards.length) return;
     const current = state.cards.find((card) => card.id === state.focusedId);
     focusCard(current || cardOrder()[0], { announce: false });
+  });
+
+  canvas.addEventListener('paste', (event) => {
+    if (event.target.closest('textarea')) return;
+    const files = [...(event.clipboardData?.files || [])];
+    if (!files.length) return;
+    event.preventDefault();
+    for (const file of files) void addFileCard(file);
+  });
+  canvas.addEventListener('dragover', (event) => {
+    if (event.dataTransfer?.types?.includes('Files')) event.preventDefault();
+  });
+  canvas.addEventListener('drop', (event) => {
+    const files = [...(event.dataTransfer?.files || [])];
+    if (!files.length) return;
+    event.preventDefault();
+    for (const file of files) void addFileCard(file);
   });
 
   canvas.addEventListener('pointerdown', (event) => {
@@ -2984,15 +3361,20 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     (event) => {
       const overCard = Boolean(event.target?.closest?.('.iwb-card'));
       if (overCard && !(event.ctrlKey || event.metaKey)) {
-        // In-card scrolling belongs to the browser. Once the transcript is at the
-        // edge the wheel chains back to the canvas, so paging never dead-ends.
+        // Native card scrolling always wins. By default the canvas must not jump
+        // when a transcript or note reaches its vertical edge. The legacy chain
+        // remains available only as an explicit settings opt-in.
         const body = event.target.closest('.iwb-body');
         if (body && state.settings.chainWheel) {
           const atTop = body.scrollTop <= 0;
           const atBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 1;
           const scrollingUp = event.deltaY < 0;
-          if (!(atTop && scrollingUp) && !(atBottom && !scrollingUp)) return;
+          if (!(atTop && scrollingUp) && !(atBottom && !scrollingUp)) {
+            event.stopPropagation();
+            return;
+          }
         } else {
+          event.stopPropagation();
           return;
         }
       }
@@ -3045,6 +3427,11 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
   btnCanvas.addEventListener('click', (event) => {
     event.stopPropagation();
     openCanvasMenu();
+  });
+
+  btnBlank.addEventListener('click', (event) => {
+    event.stopPropagation();
+    void requestNewBlankCanvas();
   });
 
   const onCanvasPointerDown = (event) => {
@@ -3103,6 +3490,68 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
   };
   document.addEventListener('keydown', onKey);
 
+  function setMode(mode) {
+    state.mode = mode === 'task' ? 'task' : 'canvas';
+    const isTask = state.mode === 'task';
+    canvas.hidden = isTask;
+    if (taskView) taskView.root.hidden = !isTask;
+    for (const control of [btnNew, btnNote, btnCanvas, btnBlank, btnArrange, btnBoard, btnFit, btnCollapse, hint, todoBar]) {
+      control.hidden = isTask;
+    }
+    btnCanvasMode.classList.toggle('active', !isTask);
+    btnTaskMode.classList.toggle('active', isTask);
+    btnCanvasMode.setAttribute('aria-selected', String(!isTask));
+    btnTaskMode.setAttribute('aria-selected', String(isTask));
+    if (isTask) taskView?.refresh();
+    updateCounts();
+  }
+
+  taskController = createTaskController({
+    adapter,
+    taskStore,
+    flow,
+    t,
+    toast,
+    bridge: {
+      getCards: () => state.cards,
+      getCanvases: syncCanvases,
+      getActiveCanvas: () => state.activeCanvas,
+      requestNewBlankCanvas,
+      requestSwitchCanvas,
+      saveCanvasAs,
+      storeCanvases,
+      addSession,
+      addNote,
+      setPipeTargets,
+      renderFoot,
+      fitView,
+      centerCard,
+      flash,
+      switchCanvas,
+      setMode,
+      save,
+      schedulePipelines,
+      recordFlow,
+    },
+  });
+  taskView = createTaskView({
+    host: root,
+    t,
+    el,
+    getSnapshot: () => taskController.snapshot(),
+    actions: taskController,
+    toast,
+  });
+  taskStore.subscribe(() => {
+    if (state.mode === 'task') taskView.refresh();
+  });
+  taskLoadPromise.then(() => {
+    if (state.mode === 'task') taskView.refresh();
+  });
+  btnCanvasMode.addEventListener('click', () => setMode('canvas'));
+  btnTaskMode.addEventListener('click', () => setMode('task'));
+  setMode('canvas');
+
   applyView();
   updateEmptyState();
 
@@ -3133,6 +3582,8 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     addSession,
     restore,
     reset,
+    setMode,
+    getTaskSnapshot: () => taskController?.snapshot(),
     dispose() {
       disposed = true;
       // Unmount happens while the host is tearing the page down: a throw here
@@ -3140,7 +3591,11 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
       try {
         clearInterval(ticker);
         clearTimeout(saveTimer);
+        clearTimeout(canvasSaveTimer);
         clearTimeout(toastTimer);
+        taskStore.dispose();
+        taskController?.dispose();
+        taskView?.dispose();
         settingsMenu.close();
         tools.dispose();
         stopApprovalWatch?.();

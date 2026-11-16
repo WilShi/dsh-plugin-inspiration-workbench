@@ -253,6 +253,7 @@ export function createRenderers(deps) {
   }
 
   function questionNode(card, pending) {
+    const answerable = pending?.answerable !== false;
     const draft = answerDraft(card, pending);
     const node = el('div', 'iwb-question');
     const head = el('div', 'iwb-question-head');

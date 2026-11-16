@@ -49,7 +49,7 @@
   font-family: var(--dsw-font-family); font-size: 10px; padding: 1px 4px; border-radius: 4px;
   border: .5px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-tertiary);
 }
-@media (max-width: 1180px) { .iwb-hint { display: none; } }
+@media (max-width: 1500px) { .iwb-hint { display: none; } }
 
 /* ── canvas ──────────────────────────────────────────────────────── */
 .iwb-canvas {
@@ -225,6 +225,7 @@
 .iwb-body {
   flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 12px 12px 4px;
   display: flex; flex-direction: column; gap: 9px; scrollbar-gutter: stable;
+  overscroll-behavior: contain;
   mask-image: linear-gradient(to bottom, #000 calc(100% - 11px), transparent);
 }
 .iwb-foot { flex: 0 0 auto; padding: 7px 8px 8px; border-top: .5px solid var(--dsw-alias-border-l1); }
@@ -662,6 +663,7 @@ mark.iwb-hit.current { outline: 1px solid var(--dsw-alias-state-warn-primary); }
   flex: 1; width: 100%; resize: none; border: 0; outline: none; background: none;
   font-family: inherit; font-size: 12.5px; line-height: 20px;
   color: var(--dsw-alias-label-primary); padding: 0;
+  overscroll-behavior: contain;
 }
 .iwb-note-input::placeholder { color: var(--dsw-alias-label-caption); }
 .iwb-card-note { background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 6%, var(--dsw-alias-bg-layer-1)); }
@@ -807,5 +809,117 @@ mark.iwb-hit.current { outline: 1px solid var(--dsw-alias-state-warn-primary); }
   opacity: 0; pointer-events: none; transition: opacity .16s, transform .16s; max-width: 70%; text-align: center; z-index: 40;
 }
 .iwb-toast.show { opacity: 1; transform: translate(-50%, 0); }
-/* The batch bar owns the bottom edge; lift toasts above it while it is visible. */
+
 .iwb-batch:not([hidden]) ~ .iwb-toast { bottom: 62px; }
+
+/* ── real pipeline delivery states ───────────────────────────────── */
+.iwb-links path.iwb-link-delivered { stroke: var(--dsw-alias-state-success-primary); opacity: .82; }
+.iwb-links path.iwb-link-failed { stroke: var(--dsw-alias-state-error-primary); opacity: .9; }
+.iwb-links path.iwb-link-drafted { stroke: var(--dsw-alias-state-warn-primary); opacity: .85; }
+.iwb-links path.iwb-link-delivering {
+  stroke: var(--dsw-alias-label-deep-diving); opacity: .95;
+  stroke-dasharray: 5 5; animation: iwb-flow-dash .7s linear infinite;
+}
+.iwb-links path.iwb-link-waiting { opacity: .46; }
+@keyframes iwb-flow-dash { to { stroke-dashoffset: -10; } }
+.iwb-btn-icon { width: 28px; padding-inline: 0; justify-content: center; flex: 0 0 auto; }
+
+/* ── accessible native confirmation dialog ───────────────────────── */
+.iwb-confirm-dialog {
+  width: min(440px, calc(100vw - 32px)); padding: 0; border: .5px solid var(--dsw-alias-border-l2);
+  border-radius: 16px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary);
+  box-shadow: var(--dsw-shadow-lv4);
+}
+.iwb-confirm-dialog::backdrop { background: rgba(15, 17, 21, .28); backdrop-filter: blur(2px); }
+.iwb-confirm-form { padding: 22px; display: flex; flex-direction: column; gap: 14px; }
+.iwb-confirm-form h2 { margin: 0; font-size: 18px; line-height: 26px; font-weight: 600; }
+.iwb-confirm-form p { margin: 0; font-size: 13px; line-height: 21px; color: var(--dsw-alias-label-secondary); }
+.iwb-confirm-form label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--dsw-alias-label-tertiary); }
+.iwb-confirm-form input {
+  height: 36px; padding: 0 10px; border: .5px solid var(--dsw-alias-border-l4); border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px;
+}
+.iwb-confirm-form input:focus { outline: 2px solid color-mix(in srgb, var(--dsw-alias-label-deep-diving) 28%, transparent); border-color: var(--dsw-alias-label-deep-diving); }
+.iwb-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.iwb-confirm-actions button {
+  min-height: 32px; padding: 0 12px; border: .5px solid var(--dsw-alias-border-l2); border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; cursor: pointer;
+}
+.iwb-confirm-actions button:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.iwb-confirm-actions button.primary { background: var(--dsw-alias-label-deep-diving); color: #fff; border-color: transparent; }
+.iwb-confirm-actions button:focus-visible { outline: 2px solid var(--dsw-alias-label-deep-diving); outline-offset: 2px; }
+
+/* ── dual view: canvas / task ────────────────────────────────────── */
+.iwb-titles { margin-right: 12px; }
+.iwb-mode-switch {
+  display: inline-flex; align-items: center; gap: 2px; margin-right: auto; padding: 2px;
+  border: .5px solid var(--dsw-alias-border-l2); border-radius: 9px; background: var(--dsw-alias-bg-layer-2);
+}
+.iwb-mode-tab {
+  height: 24px; min-width: 46px; padding: 0 10px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--dsw-alias-label-tertiary); font: inherit; font-size: 11.5px; cursor: pointer;
+}
+.iwb-mode-tab:hover { color: var(--dsw-alias-label-primary); }
+.iwb-mode-tab.active { background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); box-shadow: var(--dsw-shadow-lv1); }
+.iwb-mode-tab:focus-visible { outline: 2px solid var(--dsw-alias-label-deep-diving); outline-offset: 1px; }
+.iwb-canvas[hidden], .iwb-task-view[hidden], .iwb-toolbar [hidden] { display: none !important; }
+@media (max-width: 760px) {
+  .iwb-mode-tab { min-width: 38px; padding-inline: 7px; }
+}
+
+
+
+/* ── Markdown notes and file cards ───────────────────────────────── */
+.iwb-note-toggle { display: flex; justify-content: flex-end; gap: 4px; margin-bottom: 8px; }
+.iwb-note-toggle-button {
+  min-height: 24px; padding: 0 8px; border: .5px solid var(--dsw-alias-border-l2); border-radius: 6px;
+  background: transparent; color: var(--dsw-alias-label-tertiary); font: inherit; font-size: 10.5px; cursor: pointer;
+}
+.iwb-note-toggle-button.active { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
+.iwb-note-toggle-button:focus-visible { outline: 2px solid var(--dsw-alias-label-deep-diving); }
+.iwb-note-preview { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; font-size: 12.5px; line-height: 1.7; }
+.iwb-note-preview h1, .iwb-note-preview h2, .iwb-note-preview h3, .iwb-note-preview h4 { margin: 0 0 10px; line-height: 1.35; }
+.iwb-note-preview h1 { font-size: 18px; }
+.iwb-note-preview h2 { font-size: 16px; }
+.iwb-note-preview h3 { font-size: 14px; }
+.iwb-note-preview h4 { font-size: 12.5px; }
+.iwb-note-preview p, .iwb-note-preview .iwb-md-p { margin: 0 0 10px; }
+.iwb-note-preview ul, .iwb-note-preview ol { margin: 6px 0 12px 20px; padding: 0; }
+.iwb-note-preview li { margin: 4px 0; }
+.iwb-note-preview .iwb-codeblock { margin: 8px 0 12px; }
+.iwb-note-preview .iwb-md-code { padding: 1px 4px; border-radius: 4px; background: var(--dsw-alias-bg-layer-2); }
+.iwb-note-preview .iwb-md-link { color: var(--dsw-alias-label-deep-diving); text-decoration: underline; }
+.iwb-note-preview .iwb-md-quote { margin: 8px 0; padding-left: 10px; border-left: 2px solid var(--dsw-alias-border-l3); color: var(--dsw-alias-label-secondary); }
+.iwb-note-input[hidden], .iwb-note-preview[hidden] { display: none !important; }
+.iwb-file-body { height: 100%; display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+.iwb-file-thumb { width: 100%; height: 220px; object-fit: contain; border-radius: 9px; background: var(--dsw-alias-bg-layer-2); }
+.iwb-file-icon {
+  height: 120px; display: grid; place-items: center; border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-tertiary);
+  font-size: 22px; font-weight: 650; letter-spacing: .08em;
+}
+.iwb-file-name { font-size: 13px; font-weight: 600; line-height: 1.45; word-break: break-word; }
+.iwb-file-meta { font-size: 11px; line-height: 1.5; color: var(--dsw-alias-label-tertiary); word-break: break-all; }
+.iwb-file-open { align-self: flex-start; margin-top: auto; }
+.iwb-file-preview-button { width: 22px; height: 22px; display: grid; place-items: center; }
+.iwb-file-dialog {
+  width: min(980px, calc(100vw - 40px)); height: min(780px, calc(100vh - 40px)); padding: 0;
+  border: .5px solid var(--dsw-alias-border-l2); border-radius: 16px;
+  background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); box-shadow: var(--dsw-shadow-lv4);
+}
+.iwb-file-dialog::backdrop { background: rgba(15,17,21,.35); backdrop-filter: blur(3px); }
+.iwb-file-dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 18px 20px 12px; border-bottom: .5px solid var(--dsw-alias-border-l1); }
+.iwb-file-dialog-head h2 { margin: 0 0 5px; font-size: 17px; line-height: 1.4; word-break: break-word; }
+.iwb-file-dialog-head p { margin: 0; font-size: 11px; color: var(--dsw-alias-label-tertiary); }
+.iwb-file-dialog-close { width: 28px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--dsw-alias-label-secondary); font-size: 22px; cursor: pointer; }
+.iwb-file-dialog-close:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.iwb-file-dialog-body { height: calc(100% - 126px); overflow: auto; padding: 16px 20px; overscroll-behavior: contain; }
+.iwb-file-preview-image { display: block; max-width: 100%; max-height: 100%; margin: auto; object-fit: contain; border-radius: 10px; }
+.iwb-file-preview-frame { width: 100%; height: 100%; min-height: 520px; border: .5px solid var(--dsw-alias-border-l2); border-radius: 10px; background: white; }
+.iwb-file-preview-text { margin: 0; white-space: pre-wrap; word-break: break-word; font: 12px/1.65 var(--dsw-font-mono, monospace); color: var(--dsw-alias-label-primary); }
+.iwb-file-dialog-foot { display: flex; justify-content: flex-end; padding: 10px 20px 14px; border-top: .5px solid var(--dsw-alias-border-l1); }
+.iwb-file-dialog-foot a { text-decoration: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .iwb-links path.iwb-link-delivering { animation: none; }
+}

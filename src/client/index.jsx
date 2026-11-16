@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import styles from './styles.css';
+import taskStyles from './task-view.css';
 import { createBoard } from './board';
 import { createSessionsAdapter } from './sessions';
 import { createApprovalHub } from './approvals';
@@ -13,7 +14,6 @@ const zh = {
   title: '灵感工作台',
   new: '新建会话卡',
   arrange: '排列',
-  'attach.file': '附件',
   canvas: '画布',
   'canvas.title': '画布',
   'canvas.active': '当前画布：{name}',
@@ -313,7 +313,6 @@ const en = {
   title: 'Inspiration workbench',
   new: 'New conversation card',
   arrange: 'Arrange',
-  'attach.file': 'Attachment',
   canvas: 'Canvas',
   'canvas.title': 'Canvas',
   'canvas.active': 'Current canvas: {name}',
@@ -730,7 +729,7 @@ function WorkbenchPanel() {
   return React.createElement('div', { ref: hostRef, style: { height: '100%', minHeight: 0 } });
 }
 
-export const inject = ['slots', 'locale', 'sessions', 'layout', 'uiWorkspace', 'remote', 'remote.session', 'remote.userQuestions', 'workspaces', 'conversation'];
+export const inject = ['slots', 'locale', 'sessions', 'layout', 'uiWorkspace', 'remote', 'remote.session', 'workspaces', 'conversation'];
 
 export async function apply(ctx) {
   runtime.ctx = ctx;
@@ -741,7 +740,7 @@ export async function apply(ctx) {
     styleNode.dataset.iwb = '1';
     document.head.appendChild(styleNode);
   }
-  styleNode.textContent = styles;
+  styleNode.textContent = styles + '\n' + taskStyles;
 
   const locale = ctx.get?.('locale') ?? ctx.locale;
   if (locale?.register) {

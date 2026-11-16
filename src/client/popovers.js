@@ -376,7 +376,7 @@ export function createWorkspaceMenu(deps) {
     }
     const workspaces = adapter.listWorkspaces?.() || [];
     if (!workspaces.length) {
-      void createCardIn(null);
+      toast('当前没有可用工作区，请先在 DSH 中添加工作区，再创建会话');
       return;
     }
     const pop = el('div', 'iwb-popover iwb-workspaces');
@@ -544,7 +544,7 @@ export function createSettingsMenu(deps) {
     resetBtn.type = 'button';
     resetBtn.textContent = t('settings.reset');
     resetBtn.addEventListener('click', () => {
-      reset();
+      resetLayout();
       closeSettings();
       toast(t('settings.resetDone'));
     });
