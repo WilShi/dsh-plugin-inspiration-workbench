@@ -2998,6 +2998,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     const parts = [t('count.cards').replace('{n}', String(state.cards.length))];
     if (running) parts.push(t('count.running').replace('{n}', String(running)));
     countsNode.textContent = parts.join(' · ');
+    updateTodoBar();
   }
 
   function updateEmptyState() {

@@ -128,6 +128,7 @@ async function main() {
   await clickText('.iwb-task-detail-actions .iwb-btn', '进入现场');
   await page.waitForTimeout(500);
   record('open task returns to work scene', await page.locator('.iwb-canvas').isVisible() && await page.locator('.iwb-card').count() === 2);
+  record('empty pending reminder stays hidden after switching back to canvas', await page.locator('.iwb-todo').isHidden());
 
   await clickText('.iwb-toolbar .iwb-btn', '画布');
   await page.locator('.iwb-canvas-input').fill('E2E 任务画布');
