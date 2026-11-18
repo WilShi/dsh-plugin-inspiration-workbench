@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   TopologyPlanError,
   computeLayeredLayout,
+  ensureTopologyDependencies,
   createFallbackTopology,
   createLocalTaskDraft,
   normalizeTopologyPlan,
@@ -97,7 +98,7 @@ test('normalization and layout do not mutate their input', () => {
 });
 
 test('validateTopologyPlan accepts one through six well-formed nodes', () => {
-  for (let count = 1; count <= 6; count += 1) {
+  for (let count = 1; count <= 12; count += 1) {
     const nodes = Array.from({ length: count }, (_, index) => session('s' + index, index ? ['s' + (index - 1)] : []));
     const result = validateTopologyPlan({ nodes });
     assert.equal(result.valid, true, JSON.stringify(result.errors));
@@ -105,11 +106,36 @@ test('validateTopologyPlan accepts one through six well-formed nodes', () => {
   }
 });
 
-test('validateTopologyPlan rejects zero and seven nodes', () => {
+test('validateTopologyPlan rejects zero and thirteen nodes', () => {
   assert.ok(errorCodes({ nodes: [] }).includes('NODE_COUNT'));
   assert.ok(errorCodes({ nodes: [] }).includes('NO_SESSION'));
-  const nodes = Array.from({ length: 7 }, (_, index) => session('s' + index));
+  const nodes = Array.from({ length: 13 }, (_, index) => session('s' + index));
   assert.ok(errorCodes({ nodes }).includes('NODE_COUNT'));
+});
+
+
+test('ensureTopologyDependencies connects independent sessions to the final integrator', () => {
+  const plan = ensureTopologyDependencies({
+    nodes: [session('a'), session('b'), session('integrate'), note('result', ['integrate'])],
+  });
+  assert.deepEqual(plan.nodes.find((node) => node.id === 'a').dependsOn, []);
+  assert.deepEqual(plan.nodes.find((node) => node.id === 'b').dependsOn, []);
+  assert.deepEqual(plan.nodes.find((node) => node.id === 'integrate').dependsOn, ['a', 'b']);
+  assert.deepEqual(plan.nodes.find((node) => node.id === 'result').dependsOn, ['integrate']);
+  assert.equal(validateTopologyPlan(plan).valid, true);
+});
+
+test('ensureTopologyDependencies chooses the last session when no sink is named', () => {
+  const plan = ensureTopologyDependencies({ nodes: [session('a'), session('b'), note('result')] });
+  assert.deepEqual(plan.nodes.find((node) => node.id === 'b').dependsOn, ['a']);
+  assert.deepEqual(plan.nodes.find((node) => node.id === 'result').dependsOn, ['b']);
+  assert.equal(validateTopologyPlan(plan).valid, true);
+});
+
+test('ensureTopologyDependencies preserves explicit dependencies', () => {
+  const original = { nodes: [session('a'), session('b', ['a']), note('result', ['b'])] };
+  const plan = ensureTopologyDependencies(original);
+  assert.deepEqual(plan.nodes.find((node) => node.id === 'b').dependsOn, ['a']);
 });
 
 test('validateTopologyPlan rejects missing and self dependencies', () => {
@@ -201,11 +227,11 @@ test('createLocalTaskDraft replaces cyclic imported edges with a linear backbone
   assert.deepEqual(draft.nodes[2].dependsOn, ['session-2']);
 });
 
-test('createLocalTaskDraft caps drafts at six unique sessions', () => {
-  const sessions = Array.from({ length: 8 }, (_, index) => ({ id: 's' + index }));
+test('createLocalTaskDraft caps drafts at twelve unique sessions', () => {
+  const sessions = Array.from({ length: 14 }, (_, index) => ({ id: 's' + index }));
   const draft = createLocalTaskDraft({ sessions: [...sessions, sessions[0]] });
-  assert.equal(draft.nodes.length, 6);
-  assert.equal(new Set(draft.nodes.map((node) => node.sessionId)).size, 6);
+  assert.equal(draft.nodes.length, 12);
+  assert.equal(new Set(draft.nodes.map((node) => node.sessionId)).size, 12);
   assert.equal(validateTopologyPlan(draft).valid, true);
 });
 

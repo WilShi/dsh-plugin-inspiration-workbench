@@ -21,6 +21,7 @@ import { createTaskController } from './task-controller.js';
 import { createTaskView } from './task-view.js';
 import { createFileStore } from './file-store.js';
 import { openFilePreview, fileKind, formatBytes } from './file-preview.js';
+import { pipelineFingerprint } from './pipeline-utils.js';
 
 const STORAGE_KEY = 'dsh.inspiration-workbench.v1';
 const CANVAS_KEY = 'dsh.inspiration-workbench.canvases.v1';
@@ -1245,6 +1246,17 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     state.canvases = merged;
     state.activeCanvas = remote?.activeCanvas || local?.activeCanvas || null;
     if (!merged.some((canvas) => canvas.id === state.activeCanvas)) state.activeCanvas = null;
+    if (!state.cards.length && state.activeCanvas) {
+      const active = merged.find((canvas) => canvas.id === state.activeCanvas);
+      if (active?.layout?.cards?.length && Number(active.savedAt || active.layout.updatedAt || 0) >= localUpdatedAt) {
+        suppressSave = true;
+        try {
+          await applyLayout(active.layout, { restore: true });
+        } finally {
+          suppressSave = false;
+        }
+      }
+    }
     renderCanvasButton();
   }
 
@@ -1994,13 +2006,20 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     }
   }
 
+  function alreadyDelivered(card, target, fingerprint) {
+    const edgeKey = card.sessionId + '=>' + (target.kind === 'note' ? 'note' : 'session') + ':' + target.id;
+    const latest = flow.latestByEdge().get(edgeKey);
+    return latest?.fingerprint === fingerprint && (latest.status === 'delivered' || latest.status === 'drafted');
+  }
+
   function maybeDeliverCompleted(card) {
     if (card.running || card.kind === 'note') return;
     const text = lastAssistantText(card);
     if (!text) return;
-    const fingerprint = text.slice(0, 160);
-    if (card.catchUpFingerprint === fingerprint) return;
-    const pending = pipeTargets(card).some((target) => (card.pipedFingerprints || {})[target.kind + ':' + target.id] !== fingerprint);
+    const fingerprint = pipelineFingerprint(text);
+    if (card.catchUpFingerprint === fingerprint || card.deliveringFingerprint === fingerprint) return;
+    if (Number(card.retryAfter || 0) > Date.now()) return;
+    const pending = pipeTargets(card).some((target) => (card.pipedFingerprints || {})[target.kind + ':' + target.id] !== fingerprint && !alreadyDelivered(card, target, fingerprint));
     if (!pending) return;
     card.catchUpFingerprint = fingerprint;
     // A completed upstream can predate the edge or a page restore. Deliver it once
@@ -2015,17 +2034,24 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     if (!targets.length) return;
     const text = lastAssistantText(card);
     if (!text) return;
-    const fingerprint = text.slice(0, 160);
+    const fingerprint = pipelineFingerprint(text);
+    if (card.deliveringFingerprint === fingerprint) return;
+    card.deliveringFingerprint = fingerprint;
     card.pipedFingerprints = card.pipedFingerprints || {};
     const depth = (card.pipeDepth || 0) + 1;
-    if (depth > 3) {
+    if (depth > 16) {
       toast(t('pipe.tooLong'));
       return;
     }
 
-    for (const target of targets) {
+    let hadFailure = false;
+    try {
+      for (const target of targets) {
       const key = target.kind + ':' + target.id;
-      if (card.pipedFingerprints[key] === fingerprint) continue;
+      if (card.pipedFingerprints[key] === fingerprint || alreadyDelivered(card, target, fingerprint)) {
+        card.pipedFingerprints[key] = fingerprint;
+        continue;
+      }
       const targetCard = cardOfPipeTarget(target);
 
       // A note downstream just collects the text, whatever its mode says.
@@ -2067,14 +2093,25 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
 
       try {
         recordFlow(card, target, 'delivering', { fingerprint, message: '正在投递到目标会话' });
+        if (adapter.waitForReady) await adapter.waitForReady(target.id, { timeoutMs: 15000 });
         await adapter.prompt(target.id, text, 'queue');
         card.pipedFingerprints[key] = fingerprint;
         if (targetCard) targetCard.pipeDepth = depth;
         recordFlow(card, target, 'delivered', { fingerprint, message: '已发送到目标会话' });
         toast(t('pipe.sent').replace('{name}', pipeTargetLabel(target)));
       } catch (error) {
+        hadFailure = true;
         recordFlow(card, target, 'failed', { fingerprint, message: error?.message || '投递失败' });
         toast(t('pipe.failed').replace('{error}', error?.message || ''));
+      }
+    }
+    } finally {
+      if (card.deliveringFingerprint === fingerprint) card.deliveringFingerprint = null;
+      if (hadFailure) {
+        card.catchUpFingerprint = null;
+        card.retryAfter = Date.now() + 5000;
+      } else {
+        card.retryAfter = 0;
       }
     }
   }
@@ -3047,15 +3084,16 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     if (!saved || !Array.isArray(saved.cards)) {
       hydratePending = true;
       syncApprovalSessions();
-      void syncFromRemote().then((applied) => {
+      void (async () => {
+        const applied = await syncFromRemote();
+        await loadCanvases();
         hydratePending = false;
         if (!applied && !saveTimer) {
           // Host had nothing (or was unreachable): the empty board is legitimately
           // ours now, so the next interaction may persist it.
         }
         startRemoteSync();
-      });
-      void loadCanvases();
+      })();
       return false;
     }
     localUpdatedAt = Number(saved.updatedAt) || 0;
@@ -3532,6 +3570,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
       setMode,
       save,
       schedulePipelines,
+      maybeDeliverCompleted,
       recordFlow,
     },
   });
@@ -3574,7 +3613,11 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
       const active = state.cards.filter(
         (card) => card.kind !== 'note' && (card.running || card.queued || card.view?.questions?.length)
       );
-      if (active.length) void adapter.pollStates?.(active.map((card) => card.sessionId));
+      if (active.length) {
+        void Promise.resolve(adapter.pollStates?.(active.map((card) => card.sessionId))).then(() => {
+          for (const card of active) markDirty(card);
+        }).catch(() => {});
+      }
     }
   }, 1000);
 

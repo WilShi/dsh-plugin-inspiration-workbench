@@ -68,11 +68,11 @@ async function main() {
   if (usableIndex > 0) await modelSelect.selectOption({ index: usableIndex });
   const useAI = page.locator('.iwb-task-plan-form .iwb-task-check input').first();
   if (!(await useAI.isChecked())) await useAI.check();
-  await page.locator('.iwb-task-textarea').fill('创建一个简单的需求分析节点和结果汇总便签，只输出计划，不执行任何工具。');
+  await page.locator('.iwb-task-textarea').fill('为一个复杂电商系统设计多阶段实施计划，包含需求分析、系统架构、数据设计、接口设计、前端、后端、测试、部署和文档，只输出计划，不执行任何工具。');
   await clickText('.iwb-task-dialog-footer .iwb-btn', '生成拓扑草案');
   await page.waitForSelector('.iwb-task-plan-node', { timeout: 180000 });
   const planCount = await page.locator('.iwb-task-plan-node').count();
-  record('online AI generates a bounded topology', planCount >= 1 && planCount <= 6, planCount + ' node(s)');
+  record('online AI generates a detailed bounded topology', planCount >= 4 && planCount <= 12, planCount + ' node(s)');
   const start = page.locator('.iwb-task-plan-start input');
   if (await start.isChecked()) await start.uncheck();
   await shot('01-online-plan');

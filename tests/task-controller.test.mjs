@@ -177,6 +177,22 @@ test('task snapshot exposes node-level completion and note delivery', async () =
   assert.equal(task.nodes[1].status, 'done');
 });
 
+
+test('runtime state is persisted independently for every session', async () => {
+  const { controller, state } = harness();
+  const plan = await controller.plan({ requirement: '多会话状态保存', workspaceId: 'ws', useAI: false });
+  const result = await controller.materializePlan(plan, { start: false });
+  const sessions = state.cards.filter((card) => card.kind === 'session');
+  for (const card of sessions) {
+    card.view = { ready: true, running: false, items: [{ k: 'assistant', text: '完成' }] };
+    controller.noteSessionRuntime(card);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 750));
+  const task = controller.snapshot().tasks.find((item) => item.id === result.taskId);
+  assert.equal(Object.keys(task.sessionStates).length, sessions.length);
+  for (const card of sessions) assert.equal(task.sessionStates[card.sessionId].done, true);
+});
+
 test('model catalog returns selectable models and current default', async () => {
   const { controller, adapter } = harness();
   adapter.modelCatalog = async () => ({

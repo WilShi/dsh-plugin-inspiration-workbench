@@ -31,7 +31,7 @@ export async function runTaskAnalysis({
   }
   if (!String(prompt || '').trim()) throw new Error('规划内容不能为空');
 
-  const sessionId = await adapter.createSession({ workspaceId, title });
+  const sessionId = await adapter.createSession({ workspaceId, title, agentPreset: 'minimal' });
   const stop = adapter.open(sessionId, () => {});
   let timedOut = false;
   const startedAt = Date.now();

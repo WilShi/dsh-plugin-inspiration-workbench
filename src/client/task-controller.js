@@ -6,8 +6,10 @@ import {
   createLocalTaskDraft,
   createFallbackTopology,
   computeLayeredLayout,
+  ensureTopologyDependencies,
 } from './task-intelligence.js';
 import { runTaskAnalysis, assistantTextFromView } from './task-ai.js';
+import { pipelineFingerprint } from './pipeline-utils.js';
 
 function hashText(value) {
   let hash = 2166136261;
@@ -31,7 +33,7 @@ function runtimeExecution(view) {
     running: Boolean(view?.running),
     waiting: view?.waiting || '',
     error: view?.error || view?.lastError || false,
-    done: Boolean(view?.ready && !view?.running && (view?.items || []).length),
+    done: Boolean(view?.ready && !view?.running && (view?.items || []).some((item) => item.k === 'assistant' && String(item.text || '').trim())),
     activityAt: Date.now(),
   };
 }
@@ -39,7 +41,7 @@ function runtimeExecution(view) {
 export function createTaskController({ adapter, taskStore, flow, t, toast, bridge }) {
   const liveRuntime = new Map();
   const runtimeSignatures = new Map();
-  let runtimeSaveTimer = 0;
+  const runtimeSaveTimers = new Map();
 
   function rawTasks() {
     return taskStore.snapshot().tasks;
@@ -84,7 +86,22 @@ export function createTaskController({ adapter, taskStore, flow, t, toast, bridg
     const relatedEvents = [...flow.latestByEdge().values()].filter((event) => event.taskId === task.id || (task.canvasIds || []).includes(event.canvasId));
     if (relatedEvents.some((event) => event.status === 'failed')) return 'blocked';
     if (relatedEvents.some((event) => event.status === 'delivering')) return 'running';
-    if (states.length && states.every((state) => state.done)) return 'done';
+    const expectedStates = (task.sessionIds || []).length;
+    if (expectedStates && states.length === expectedStates && states.every((state) => state.done)) {
+      const pendingNote = (task.plan?.nodes || []).some((node) => {
+        if (node.kind !== 'note' || !node.cardId) return false;
+        return (node.dependsOn || []).some((sourceId) => {
+          const source = (task.plan.nodes || []).find((candidate) => candidate.id === sourceId && candidate.kind === 'session');
+          if (!source?.sessionId) return false;
+          const event = flow.latestByEdge().get(source.sessionId + '=>' + 'note:' + node.cardId);
+          const sourceCard = bridge.getCards().find((card) => card.sessionId === source.sessionId);
+          const latestText = [...(sourceCard?.view?.items || [])].reverse().find((item) => item.k === 'assistant' && String(item.text || '').trim())?.text || '';
+          return event?.status !== 'delivered' || event.fingerprint !== pipelineFingerprint(latestText);
+        });
+      });
+      if (pendingNote) return 'running';
+      return 'done';
+    }
     return task.executionStatus || 'idle';
   }
   function acceptanceFor(task) {
@@ -148,6 +165,10 @@ export function createTaskController({ adapter, taskStore, flow, t, toast, bridg
       ...task,
       executionStatus,
       acceptanceStatus,
+      ...(task.executionStatus !== executionStatus ? (() => {
+        taskStore.updateTask(task.id, { executionStatus });
+        return {};
+      })() : {}),
       reviewStatus: acceptanceStatus,
       status: normalized.status,
       canvasNames: canvasNames(task.canvasIds),
@@ -161,6 +182,17 @@ export function createTaskController({ adapter, taskStore, flow, t, toast, bridg
     };
   }
   function snapshot() {
+    for (const card of bridge.getCards()) {
+      if (!card.sessionId) continue;
+      try {
+        card.view = adapter.read(card.sessionId);
+        card.running = Boolean(card.view?.running);
+      } catch {
+        // Keep the last view when a session is temporarily unavailable.
+      }
+      noteSessionRuntime(card);
+      if (!card.running) bridge.maybeDeliverCompleted?.(card);
+    }
     return {
       tasks: sortTasks(rawTasks().map(projectTask)),
       canvases: canvases(),
@@ -173,21 +205,22 @@ export function createTaskController({ adapter, taskStore, flow, t, toast, bridg
       running: Boolean(card.running),
       waiting: card.waiting || '',
       error: card.view?.lastError || ['error', 'failure'].includes((card.view?.items || []).at(-1)?.k) || false,
-      done: Boolean(card.view?.ready && !card.running && (card.view?.items || []).length),
+      done: Boolean(card.view?.ready && !card.running && !card.queued && (card.view?.items || []).some((item) => item.k === 'assistant' && String(item.text || '').trim())),
       activityAt: card.activityAt || Date.now(),
     };
     const signature = JSON.stringify(runtime);
     if (runtimeSignatures.get(card.sessionId) === signature) return;
     runtimeSignatures.set(card.sessionId, signature);
     liveRuntime.set(card.sessionId, runtime);
-    clearTimeout(runtimeSaveTimer);
-    runtimeSaveTimer = setTimeout(() => {
+    clearTimeout(runtimeSaveTimers.get(card.sessionId));
+    runtimeSaveTimers.set(card.sessionId, setTimeout(() => {
       const next = rawTasks().map((task) => {
         if (!(task.sessionIds || []).includes(card.sessionId)) return task;
         return { ...task, sessionStates: { ...(task.sessionStates || {}), [card.sessionId]: runtime } };
       });
       taskStore.setTasks(next);
-    }, 650);
+      runtimeSaveTimers.delete(card.sessionId);
+    }, 650));
   }
 
   function canvasIdsForSession(sessionId) {
@@ -386,19 +419,35 @@ export function createTaskController({ adapter, taskStore, flow, t, toast, bridg
       return fallback;
     }
     const prompt = [
-      '你是多 Agent 工作流规划助手。把用户需求拆成 2-4 个可执行节点。',
+      '你是多 Agent 工作流规划助手。根据需求复杂度拆成 4-12 个可执行节点，不要凑数；只有职责独立、输入输出明确、可单独验收的工作才单独成节点。简单任务可以少于 4 个，复杂任务应尽量拆细。',
       '只输出 JSON：{"title":"...","goal":"...","acceptanceCriteria":["..."],"nodes":[{"id":"research","kind":"session","title":"...","prompt":"...","dependsOn":[]},{"id":"delivery","kind":"note","title":"结果汇总","note":"# 结果汇总","dependsOn":["research"]}]}。',
-      'session 节点必须是真实可执行工作，note 节点只能做最终或中间结果汇点，不能有下游。dependsOn 填上游节点 id。每个 session 的 prompt 要包含目标、输入和期望输出。',
+      'session 节点必须是真实可执行工作，覆盖实际需要的分析、设计、实现、验证和交付环节，不得重复或泛泛而谈。note 节点只能做最终或中间结果汇点，不能有下游。dependsOn 填上游节点 id，依赖必须真实，不要简单串成一条长链。每个 session 的 prompt 要包含目标、输入、期望输出和验收标准。',
       '用户需求：' + goal,
     ].join('\n');
-    const result = await runTaskAnalysis({ adapter, prompt, workspaceId: workspaceId || defaultWorkspaceId(), selection: model });
-    const parsed = parseAIResponse(result.text);
-    const candidate = parsed.plan || parsed.topology || parsed;
-    const normalized = normalizeTopologyPlan(candidate);
+    const parsePlan = (text) => {
+      const parsed = parseAIResponse(text);
+      const candidate = parsed.plan || parsed.topology || parsed;
+      return { candidate, normalized: ensureTopologyDependencies(normalizeTopologyPlan(candidate)) };
+    };
+    let result = await runTaskAnalysis({ adapter, prompt, workspaceId: workspaceId || defaultWorkspaceId(), selection: model });
+    let parsedPlan;
+    try {
+      parsedPlan = parsePlan(result.text);
+    } catch {
+      result = await runTaskAnalysis({
+        adapter,
+        prompt: prompt + '\n上一次输出无法解析为有效拓扑。请只返回合法 JSON，不要输出 Markdown、解释或多余文字。',
+        workspaceId: workspaceId || defaultWorkspaceId(),
+        selection: model,
+      });
+      parsedPlan = parsePlan(result.text);
+    }
+    const { candidate, normalized } = parsedPlan;
     const validation = validateTopologyPlan(normalized);
     if (!validation.valid) throw new Error(validation.errors.map((error) => error.message).join('；'));
     normalized.acceptanceCriteria = asArray(candidate.acceptanceCriteria || candidate.acceptance).map(String);
     normalized.workspaceId = workspaceId || defaultWorkspaceId();
+    normalized.model = model ? { provider: model.provider, model: model.model || model.id, reasoningEffort: model.reasoningEffort } : undefined;
     const rawNodes = asArray(candidate.nodes);
     for (const node of normalized.nodes) {
       const raw = rawNodes.find((item) => (item.id || item.key) === node.id);
@@ -450,7 +499,7 @@ export function createTaskController({ adapter, taskStore, flow, t, toast, bridg
   }
 
   async function materializePlan(value, options = {}) {
-    const plan = normalizeTopologyPlan(value);
+    const plan = ensureTopologyDependencies(normalizeTopologyPlan(value));
     plan.acceptanceCriteria = asArray(value?.acceptanceCriteria || value?.acceptance).map(String);
     plan.workspaceId = value?.workspaceId || '';
     const rawNodes = asArray(value?.nodes);
@@ -478,7 +527,15 @@ export function createTaskController({ adapter, taskStore, flow, t, toast, bridg
             continue;
           }
           const workspace = adapter.listWorkspaces?.().find((item) => item.id === plan.workspaceId || item.title === node.workspace);
-          const sessionId = node.sessionId || await adapter.createSession({ workspaceId: workspace?.id || workspaceId });
+          const sessionId = node.sessionId || await adapter.createSession({ workspaceId: workspace?.id || workspaceId, agentPreset: 'minimal' });
+          if (plan.model && adapter.selectModel) {
+            if (adapter.waitForReady) await adapter.waitForReady(sessionId, { timeoutMs: 15000 });
+            await adapter.selectModel(sessionId, {
+              provider: plan.model.provider,
+              model: plan.model.model || plan.model.id,
+              reasoningEffort: plan.model.reasoningEffort,
+            });
+          }
           const card = bridge.addSession({ sessionId, title: node.title, workspace: workspace?.title || node.workspace || '', x: position.x, y: position.y, w: 380, h: 500 });
           node.sessionId = sessionId;
           cards.set(nodeId, card);
@@ -615,6 +672,9 @@ export function createTaskController({ adapter, taskStore, flow, t, toast, bridg
     },
     async createCanvas(task) { return createCanvas(task); },
     continuationDraft,
-    dispose() { clearTimeout(runtimeSaveTimer); },
+    dispose() {
+      for (const timer of runtimeSaveTimers.values()) clearTimeout(timer);
+      runtimeSaveTimers.clear();
+    },
   };
 }

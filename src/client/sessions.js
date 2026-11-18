@@ -703,7 +703,10 @@ export function createSessionsAdapter(ctx) {
     return {
       ready: true,
       selection,
-      running: Boolean(snapshot.running),
+      running: (() => {
+        const latestTurn = folded.items.filter((item) => item.k === 'turnProcess').at(-1);
+        return latestTurn ? latestTurn.endTime == null : Boolean(snapshot.running);
+      })(),
       questions,
       approvals,
       items: folded.items,
@@ -981,7 +984,14 @@ export function createSessionsAdapter(ctx) {
     const request = {};
     const workspaceId = options && typeof options === 'object' ? options.workspaceId : undefined;
     if (workspaceId) request.workspaceId = workspaceId;
-    return await sessions.create(request);
+    if (options?.agentPreset) request.agentPreset = options.agentPreset;
+    try {
+      return await sessions.create(request);
+    } catch (error) {
+      if (!options?.agentPreset) throw error;
+      delete request.agentPreset;
+      return await sessions.create(request);
+    }
   }
 
   async function waitForReady(sessionId, options) {

@@ -6,7 +6,7 @@
  * using the plan or computing a layout.
  */
 
-const MAX_NODES = 6;
+const MAX_NODES = 12;
 const DEFAULT_TITLE = '任务计划';
 
 function isRecord(value) {
@@ -193,6 +193,26 @@ export function normalizeTopologyPlan(value) {
   };
 }
 
+/**
+ * Complete a dependency-free AI plan by using its final session as the integrator.
+ * A plan that already has session dependencies is left untouched.
+ */
+export function ensureTopologyDependencies(value) {
+  const plan = normalizeTopologyPlan(value);
+  const sessions = plan.nodes.filter((node) => node.kind === 'session');
+  if (sessions.length < 2 || sessions.some((node) => node.dependsOn.length > 0)) return plan;
+
+  const notes = plan.nodes.filter((node) => node.kind === 'note');
+  const preferredId = notes.flatMap((node) => node.dependsOn).find((id) => sessions.some((node) => node.id === id));
+  const sink = preferredId ? sessions.find((node) => node.id === preferredId) : sessions.at(-1);
+  const others = sessions.filter((node) => node !== sink);
+  sink.dependsOn = others.map((node) => node.id);
+  for (const note of notes) {
+    if (!note.dependsOn.length) note.dependsOn = [sink.id];
+  }
+  return plan;
+}
+
 /** Validate all topology invariants and return machine-readable errors. */
 export function validateTopologyPlan(value) {
   let plan;
@@ -208,7 +228,7 @@ export function validateTopologyPlan(value) {
   const errors = [];
   const add = (code, message, details = {}) => errors.push({ code, message, ...details });
   if (plan.nodes.length < 1 || plan.nodes.length > MAX_NODES) {
-    add('NODE_COUNT', '拓扑计划必须包含 1-6 个节点', { count: plan.nodes.length });
+    add('NODE_COUNT', '拓扑计划必须包含 1-12 个节点', { count: plan.nodes.length });
   }
 
   const counts = new Map();
