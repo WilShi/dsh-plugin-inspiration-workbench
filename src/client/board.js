@@ -769,7 +769,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     return card;
   }
 
-  function addSession({ sessionId, title, workspace, x, y, w, h, focus, pipeline, composerDraft }) {
+  function addSession({ sessionId, title, workspace, x, y, w, h, focus, pipeline, composerDraft, autoTask }) {
     if (disposed) return null;
     const existing = state.cards.find((card) => card.sessionId === sessionId);
     if (existing) {
@@ -790,6 +790,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
       h: h || DEFAULT_H,
       stackId: null,
       kind: 'session',
+      autoTask: Boolean(autoTask),
       running: false,
       startedAt: 0,
       composerDraft: composerDraft || '',
@@ -2290,6 +2291,27 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     });
   }
 
+  async function autoAnswerQuestions(card) {
+    if (!card.autoTask || card.autoAnswering || !adapter.answerQuestion) return;
+    const questions = card.view?.questions || [];
+    if (!questions.length) return;
+    card.autoAnswering = true;
+    try {
+      for (const question of questions) {
+        const answers = (question.items || []).map((item) => ({
+          id: item.id,
+          selected: item.options?.[0]?.label ? [item.options[0].label] : [],
+          custom: '按当前目标继续，直接输出本节点结论，不执行破坏性操作。',
+        }));
+        await adapter.answerQuestion(card.sessionId, question.callId, answers);
+      }
+    } catch {
+      // Keep the question visible when the host does not support automatic answers.
+    } finally {
+      card.autoAnswering = false;
+    }
+  }
+
   function renderCard(card) {
     if (card.kind === 'note' || card.kind === 'file') return;
     let view;
@@ -2401,6 +2423,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     renderBody(card, view);
     renderQueue(card, view);
     if (!card.running) maybeDeliverCompleted(card);
+    if (card.waiting === 'question') void autoAnswerQuestions(card);
     taskController?.noteSessionRuntime(card);
     if (wasRunning !== card.running) {
       renderFoot(card);
@@ -2983,7 +3006,20 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
       head.addEventListener('pointercancel', up);
     });
 
-    head.addEventListener('dblclick', () => centerCard(card));
+    head.addEventListener('dblclick', (event) => {
+      if (event.target.closest('button, input, textarea, a')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (card.kind === 'note') {
+        card.viewMode = card.viewMode === 'source' ? 'preview' : 'source';
+        noteBody(card);
+        saveSoon();
+      } else if (card.kind === 'file') {
+        void openStoredFile(card);
+      } else {
+        onOpenSession?.(card.sessionId);
+      }
+    });
 
     const grip = node.querySelector('.iwb-resize');
     grip.addEventListener('pointerdown', (event) => {
@@ -3046,6 +3082,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
   let saveTimer = 0;
   let suppressSave = false;
   function saveSoon() {
+    localUpdatedAt = Date.now();
     clearTimeout(saveTimer);
     saveTimer = setTimeout(save, 220);
   }
@@ -3088,9 +3125,9 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
         const applied = await syncFromRemote();
         await loadCanvases();
         hydratePending = false;
-        if (!applied && !saveTimer) {
-          // Host had nothing (or was unreachable): the empty board is legitimately
-          // ours now, so the next interaction may persist it.
+        if (!applied && !saveTimer && state.cards.length) {
+          // The user may have added cards before the first Host sync completed.
+          save();
         }
         startRemoteSync();
       })();
@@ -3527,6 +3564,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     else if (event.key === '+' || event.key === '=') zoomBy(0.12);
     else if (event.key === '-') zoomBy(-0.12);
   };
+  window.addEventListener('pagehide', save);
   document.addEventListener('keydown', onKey);
 
   function setMode(mode) {
@@ -3629,6 +3667,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
     setMode,
     getTaskSnapshot: () => taskController?.snapshot(),
     dispose() {
+      save();
       disposed = true;
       // Unmount happens while the host is tearing the page down: a throw here
       // would surface as a blank page, so cleanup never propagates errors.
@@ -3646,6 +3685,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
         stopUploadWatch?.();
         stopTitleWatch?.();
         stopRemoteSync?.();
+        window.removeEventListener('pagehide', save);
         document.removeEventListener('keydown', onKey);
         closePipeMenu();
         closeKanbanMenu();

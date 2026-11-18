@@ -145,6 +145,12 @@ async function main() {
   record('switching back restores full work scene', await page.locator('.iwb-card').count() === 2);
   record('restored composer keeps draft', (await page.locator('.iwb-foot textarea').first().inputValue()).includes('实现任务画布'));
 
+  await page.locator('.iwb-card:not(.iwb-card-note) .iwb-head').first().dblclick();
+  await page.waitForTimeout(600);
+  record('double-clicking a session card opens the native conversation', await page.evaluate(() => !document.querySelector('.iwb-root') || document.querySelector('.iwb-root').offsetParent === null));
+  await clickText('button', '灵感工作台');
+  await page.waitForTimeout(500);
+
   await page.locator('.iwb-card-note [data-act="close"]').first().click();
   await page.waitForTimeout(800);
   record('closing a note also removes its pipeline paths', await page.locator('.iwb-links path').count() === 0, String(await page.locator('.iwb-links path').count()));

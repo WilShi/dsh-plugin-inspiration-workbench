@@ -536,7 +536,7 @@ export function createTaskController({ adapter, taskStore, flow, t, toast, bridg
               reasoningEffort: plan.model.reasoningEffort,
             });
           }
-          const card = bridge.addSession({ sessionId, title: node.title, workspace: workspace?.title || node.workspace || '', x: position.x, y: position.y, w: 380, h: 500 });
+          const card = bridge.addSession({ sessionId, title: node.title, workspace: workspace?.title || node.workspace || '', x: position.x, y: position.y, w: 380, h: 500, autoTask: true });
           node.sessionId = sessionId;
           cards.set(nodeId, card);
           createdSessionIds.push(sessionId);

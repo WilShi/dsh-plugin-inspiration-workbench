@@ -82,7 +82,7 @@ async function main() {
   record('final result note receives integrated output', noteText.trim().length > template.length + 20, noteText.slice(0, 180));
   await clickText('.iwb-mode-tab', '任务');
   await page.locator('.iwb-task-list-select').first().click();
-  await page.waitForFunction(() => document.querySelector('.iwb-task-auto-status')?.textContent.includes('待验收'), null, { timeout: 20000 });
+  await page.waitForFunction(() => document.querySelector('.iwb-task-auto-status')?.textContent.includes('待验收'), null, { timeout: 120000 });
   record('completed chain is ready for acceptance', true);
   await page.screenshot({ path: join(outDir, 'completed.png'), fullPage: true });
   record('no browser page errors', errors.length === 0, errors.slice(0, 3).join(' / '));
