@@ -145,7 +145,7 @@ async function main() {
   record('switching back restores full work scene', await page.locator('.iwb-card').count() === 2);
   record('restored composer keeps draft', (await page.locator('.iwb-foot textarea').first().inputValue()).includes('实现任务画布'));
 
-  await page.locator('.iwb-card:not(.iwb-card-note) .iwb-head').first().dblclick();
+  await page.locator('.iwb-card:not(.iwb-card-note)').first().dblclick({ position: { x: 42, y: 92 } });
   await page.waitForTimeout(600);
   record('double-clicking a session card centers it in the viewport', await page.locator('.iwb-card:not(.iwb-card-note)').first().evaluate((node) => {
     const rect = node.getBoundingClientRect();

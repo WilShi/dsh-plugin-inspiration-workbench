@@ -76,7 +76,7 @@ async function main() {
   record('note defaults to rendered Markdown', await page.locator('.iwb-note-preview .iwb-md-h1').textContent() === '项目计划');
   record('note renders emphasis and quote', await page.locator('.iwb-note-preview strong').count() >= 1 && await page.locator('.iwb-note-preview .iwb-md-quote').count() >= 1);
   record('note keeps source toggle accessible', await page.locator('.iwb-note-toggle-button').count() === 2);
-  await page.locator('.iwb-card-note .iwb-head').dblclick();
+  await page.locator('.iwb-card-note').dblclick({ position: { x: 42, y: 92 } });
   record('double-clicking a note centers it in the viewport', await page.locator('.iwb-card-note').evaluate((node) => {
     const rect = node.getBoundingClientRect();
     const canvas = document.querySelector('.iwb-canvas').getBoundingClientRect();
@@ -87,7 +87,7 @@ async function main() {
 
   await upload({ name: '说明.txt', mimeType: 'text/plain', buffer: Buffer.from('这是用于验证文件预览的文本内容。') });
   record('text file becomes a file card', (await page.locator('.iwb-file-name').last().textContent()).includes('说明.txt'));
-  await page.locator('.iwb-file-card .iwb-head').last().dblclick();
+  await page.locator('.iwb-file-card').last().dblclick({ position: { x: 42, y: 92 } });
   record('double-clicking a file card centers it in the viewport', await page.locator('.iwb-file-card').last().evaluate((node) => {
     const rect = node.getBoundingClientRect();
     const canvas = document.querySelector('.iwb-canvas').getBoundingClientRect();

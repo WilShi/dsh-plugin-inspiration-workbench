@@ -3006,7 +3006,7 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
       head.addEventListener('pointercancel', up);
     });
 
-    head.addEventListener('dblclick', (event) => {
+    node.addEventListener('dblclick', (event) => {
       if (event.target.closest('button, input, textarea, a')) return;
       event.preventDefault();
       event.stopPropagation();
