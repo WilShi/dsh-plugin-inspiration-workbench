@@ -77,18 +77,22 @@ async function main() {
   record('note renders emphasis and quote', await page.locator('.iwb-note-preview strong').count() >= 1 && await page.locator('.iwb-note-preview .iwb-md-quote').count() >= 1);
   record('note keeps source toggle accessible', await page.locator('.iwb-note-toggle-button').count() === 2);
   await page.locator('.iwb-card-note .iwb-head').dblclick();
-  record('double-clicking a note switches to source editing', await page.locator('.iwb-note-input').isVisible());
-  await page.locator('.iwb-card-note .iwb-head').dblclick();
-  record('double-clicking a note again restores preview', await page.locator('.iwb-note-preview').isVisible());
+  record('double-clicking a note centers it in the viewport', await page.locator('.iwb-card-note').evaluate((node) => {
+    const rect = node.getBoundingClientRect();
+    const canvas = document.querySelector('.iwb-canvas').getBoundingClientRect();
+    return Math.abs(rect.x + rect.width / 2 - (canvas.x + canvas.width / 2)) < 24 && Math.abs(rect.y + rect.height / 2 - (canvas.y + canvas.height / 2)) < 24;
+  }));
   record('unsafe Markdown links are not rendered as executable links', await page.locator('.iwb-note-preview a[href^="javascript:"]').count() === 0);
   await shot('01-note-preview');
 
   await upload({ name: '说明.txt', mimeType: 'text/plain', buffer: Buffer.from('这是用于验证文件预览的文本内容。') });
   record('text file becomes a file card', (await page.locator('.iwb-file-name').last().textContent()).includes('说明.txt'));
   await page.locator('.iwb-file-card .iwb-head').last().dblclick();
-  await page.waitForSelector('.iwb-file-dialog');
-  record('double-clicking a file card opens its preview', await page.locator('.iwb-file-dialog').isVisible());
-  await closePreview();
+  record('double-clicking a file card centers it in the viewport', await page.locator('.iwb-file-card').last().evaluate((node) => {
+    const rect = node.getBoundingClientRect();
+    const canvas = document.querySelector('.iwb-canvas').getBoundingClientRect();
+    return Math.abs(rect.x + rect.width / 2 - (canvas.x + canvas.width / 2)) < 24 && Math.abs(rect.y + rect.height / 2 - (canvas.y + canvas.height / 2)) < 24;
+  }));
   await page.locator('.iwb-file-open').last().click();
   await page.waitForSelector('.iwb-file-dialog');
   record('text preview opens in native dialog', (await page.locator('.iwb-file-preview-text').innerText()).includes('文本内容'));

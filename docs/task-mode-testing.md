@@ -1,6 +1,6 @@
 # 双模式任务工作流验收记录
 
-版本：0.13.5
+版本：0.13.6
 
 ## 已实现
 
@@ -73,7 +73,7 @@ npm run verify:pipeline -- "http://127.0.0.1:<port>/?token=<token>"
 npm run verify:files -- "http://127.0.0.1:<port>/?token=<token>"
 ~~~
 
-- **23 / 23 通过，页面无错误**。
+- **22 / 22 通过，页面无错误**。
 - 覆盖 Markdown 渲染与源码切换、恶意链接拦截、文本/图片/HTML/Word/未知格式预览、HTML 脚本沙箱、下载、粘贴创建、刷新恢复、文件名恢复、工具栏无溢出、每卡预览入口。
 - 截图位于 var/file-cards/。
 

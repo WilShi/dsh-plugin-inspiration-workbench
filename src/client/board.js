@@ -3010,15 +3010,8 @@ export function createBoard({ host, adapter, approvals, t, onOpenSession }) {
       if (event.target.closest('button, input, textarea, a')) return;
       event.preventDefault();
       event.stopPropagation();
-      if (card.kind === 'note') {
-        card.viewMode = card.viewMode === 'source' ? 'preview' : 'source';
-        noteBody(card);
-        saveSoon();
-      } else if (card.kind === 'file') {
-        void openStoredFile(card);
-      } else {
-        onOpenSession?.(card.sessionId);
-      }
+      focusCard(card, { announce: false });
+      centerCard(card);
     });
 
     const grip = node.querySelector('.iwb-resize');

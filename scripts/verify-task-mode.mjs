@@ -147,7 +147,11 @@ async function main() {
 
   await page.locator('.iwb-card:not(.iwb-card-note) .iwb-head').first().dblclick();
   await page.waitForTimeout(600);
-  record('double-clicking a session card opens the native conversation', await page.evaluate(() => !document.querySelector('.iwb-root') || document.querySelector('.iwb-root').offsetParent === null));
+  record('double-clicking a session card centers it in the viewport', await page.locator('.iwb-card:not(.iwb-card-note)').first().evaluate((node) => {
+    const rect = node.getBoundingClientRect();
+    const canvas = document.querySelector('.iwb-canvas').getBoundingClientRect();
+    return Math.abs(rect.x + rect.width / 2 - (canvas.x + canvas.width / 2)) < 24 && Math.abs(rect.y + rect.height / 2 - (canvas.y + canvas.height / 2)) < 24;
+  }));
   await clickText('button', '灵感工作台');
   await page.waitForTimeout(500);
 
